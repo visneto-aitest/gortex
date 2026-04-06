@@ -25,6 +25,18 @@ const (
 	rsQImpl = `(impl_item
 		type: (type_identifier) @impl.type) @impl.def`
 
+	rsQImplMethod = `(impl_item
+		type: (type_identifier) @impl.type
+		body: (declaration_list
+			(function_item
+				name: (identifier) @impl.method.name) @impl.method.def))`
+
+	rsQTraitMethod = `(trait_item
+		name: (type_identifier) @trait.name
+		body: (declaration_list
+			(function_signature_item
+				name: (identifier) @trait.method.name)))`
+
 	rsQUse = `(use_declaration
 		argument: (_) @use.path) @use.def`
 
@@ -77,11 +89,44 @@ func (e *RustExtractor) Extract(filePath string, src []byte) (*parser.Extraction
 
 	seen := make(map[string]bool)
 
-	// Functions.
-	matches, _ := parser.RunQuery(rsQFunction, e.lang, root, src)
+	// Impl methods (must run before functions to filter them out).
+	implMethodLines := make(map[int]bool)
+	matches, _ := parser.RunQuery(rsQImplMethod, e.lang, root, src)
+	for _, m := range matches {
+		typeName := m.Captures["impl.type"].Text
+		methodName := m.Captures["impl.method.name"].Text
+		def := m.Captures["impl.method.def"]
+		id := filePath + "::" + typeName + "." + methodName
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		implMethodLines[def.StartLine] = true
+		result.Nodes = append(result.Nodes, &graph.Node{
+			ID: id, Kind: graph.KindMethod, Name: methodName,
+			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
+			Language: "rust", Meta: map[string]any{
+				"receiver":  typeName,
+				"signature": "fn " + methodName + "(...)",
+			},
+		})
+		result.Edges = append(result.Edges, &graph.Edge{
+			From: fileNode.ID, To: id, Kind: graph.EdgeDefines, FilePath: filePath, Line: def.StartLine + 1,
+		})
+		typeID := filePath + "::" + typeName
+		result.Edges = append(result.Edges, &graph.Edge{
+			From: id, To: typeID, Kind: graph.EdgeMemberOf, FilePath: filePath, Line: def.StartLine + 1,
+		})
+	}
+
+	// Functions (skip those already extracted as impl methods).
+	matches, _ = parser.RunQuery(rsQFunction, e.lang, root, src)
 	for _, m := range matches {
 		name := m.Captures["func.name"].Text
 		def := m.Captures["func.def"]
+		if implMethodLines[def.StartLine] {
+			continue
+		}
 		id := filePath + "::" + name
 		if seen[id] {
 			continue
@@ -137,6 +182,15 @@ func (e *RustExtractor) Extract(filePath string, src []byte) (*parser.Extraction
 		})
 	}
 
+	// Trait method specs (collect before creating trait nodes).
+	traitMethods := make(map[string][]string)
+	matches, _ = parser.RunQuery(rsQTraitMethod, e.lang, root, src)
+	for _, m := range matches {
+		tName := m.Captures["trait.name"].Text
+		mName := m.Captures["trait.method.name"].Text
+		traitMethods[tName] = append(traitMethods[tName], mName)
+	}
+
 	// Traits.
 	matches, _ = parser.RunQuery(rsQTrait, e.lang, root, src)
 	for _, m := range matches {
@@ -147,10 +201,14 @@ func (e *RustExtractor) Extract(filePath string, src []byte) (*parser.Extraction
 			continue
 		}
 		seen[id] = true
+		meta := map[string]any{}
+		if methods, ok := traitMethods[name]; ok {
+			meta["methods"] = methods
+		}
 		result.Nodes = append(result.Nodes, &graph.Node{
 			ID: id, Kind: graph.KindInterface, Name: name,
 			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
-			Language: "rust",
+			Language: "rust", Meta: meta,
 		})
 		result.Edges = append(result.Edges, &graph.Edge{
 			From: fileNode.ID, To: id, Kind: graph.EdgeDefines, FilePath: filePath, Line: def.StartLine + 1,

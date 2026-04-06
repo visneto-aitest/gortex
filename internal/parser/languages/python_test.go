@@ -37,9 +37,20 @@ func TestPyExtractor_Class(t *testing.T) {
 	require.Len(t, types, 1)
 	assert.Equal(t, "UserService", types[0].Name)
 
-	// Class methods are extracted as functions.
+	// Class methods are extracted as KindMethod, not KindFunction.
+	methods := nodesOfKind(result.Nodes, graph.KindMethod)
+	assert.Len(t, methods, 2) // __init__, get_user
+
+	// No top-level functions.
 	funcs := nodesOfKind(result.Nodes, graph.KindFunction)
-	assert.GreaterOrEqual(t, len(funcs), 2)
+	assert.Len(t, funcs, 0)
+
+	// EdgeMemberOf edges link methods to the class.
+	memberEdges := edgesOfKind(result.Edges, graph.EdgeMemberOf)
+	assert.Len(t, memberEdges, 2)
+	for _, e := range memberEdges {
+		assert.Equal(t, "service.py::UserService", e.To)
+	}
 }
 
 func TestPyExtractor_Imports(t *testing.T) {

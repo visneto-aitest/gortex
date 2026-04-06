@@ -71,6 +71,37 @@ func TestTSExtractor_Interface(t *testing.T) {
 	assert.Equal(t, "Config", ifaces[0].Name)
 }
 
+func TestTSExtractor_Variables(t *testing.T) {
+	src := []byte(`const API_URL = "https://api.example.com";
+let count = 0;
+export const MAX_RETRIES = 3;
+`)
+	e := NewTypeScriptExtractor()
+	result, err := e.Extract("config.ts", src)
+	require.NoError(t, err)
+
+	vars := nodesOfKind(result.Nodes, graph.KindVariable)
+	assert.GreaterOrEqual(t, len(vars), 2)
+}
+
+func TestTSExtractor_InterfaceMethods(t *testing.T) {
+	src := []byte(`interface Repository {
+    findById(id: string): User;
+    save(user: User): void;
+}
+`)
+	e := NewTypeScriptExtractor()
+	result, err := e.Extract("repo.ts", src)
+	require.NoError(t, err)
+
+	ifaces := nodesOfKind(result.Nodes, graph.KindInterface)
+	require.Len(t, ifaces, 1)
+	methods, ok := ifaces[0].Meta["methods"].([]string)
+	require.True(t, ok)
+	assert.Contains(t, methods, "findById")
+	assert.Contains(t, methods, "save")
+}
+
 func TestTSExtractor_Imports(t *testing.T) {
 	src := []byte(`import { Router } from 'express';
 import axios from 'axios';

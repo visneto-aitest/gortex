@@ -31,6 +31,12 @@ const (
 
 	pyQAssignment = `(assignment
 		left: (identifier) @var.name) @var.def`
+
+	pyQClassMethod = `(class_definition
+		name: (identifier) @class.name
+		body: (block
+			(function_definition
+				name: (identifier) @method.name) @method.def))`
 )
 
 // PythonExtractor extracts Python source files.
@@ -63,21 +69,55 @@ func (e *PythonExtractor) Extract(filePath string, src []byte) (*parser.Extracti
 	result.Nodes = append(result.Nodes, fileNode)
 
 	seen := make(map[string]bool)
+	methodLines := make(map[int]bool) // track lines already extracted as methods
 
-	// Functions (top-level and nested).
-	matches, _ := parser.RunQuery(pyQFunction, e.lang, root, src)
+	// Class methods — extract before functions so we can skip them.
+	matches, _ := parser.RunQuery(pyQClassMethod, e.lang, root, src)
+	for _, m := range matches {
+		className := m.Captures["class.name"].Text
+		methodName := m.Captures["method.name"].Text
+		def := m.Captures["method.def"]
+
+		id := filePath + "::" + className + "." + methodName
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		methodLines[def.StartLine] = true
+
+		result.Nodes = append(result.Nodes, &graph.Node{
+			ID: id, Kind: graph.KindMethod, Name: methodName,
+			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
+			Language: "python", Meta: map[string]any{
+				"receiver":  className,
+				"signature": "def " + methodName + "(...)",
+			},
+		})
+		result.Edges = append(result.Edges, &graph.Edge{
+			From: fileNode.ID, To: id, Kind: graph.EdgeDefines, FilePath: filePath, Line: def.StartLine + 1,
+		})
+		typeID := filePath + "::" + className
+		result.Edges = append(result.Edges, &graph.Edge{
+			From: id, To: typeID, Kind: graph.EdgeMemberOf, FilePath: filePath, Line: def.StartLine + 1,
+		})
+	}
+
+	// Functions (top-level only — skip lines already extracted as methods).
+	matches, _ = parser.RunQuery(pyQFunction, e.lang, root, src)
 	for _, m := range matches {
 		name := m.Captures["func.name"].Text
 		def := m.Captures["func.def"]
+		if methodLines[def.StartLine] {
+			continue
+		}
 		id := filePath + "::" + name
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		kind := graph.KindFunction
 
 		result.Nodes = append(result.Nodes, &graph.Node{
-			ID: id, Kind: kind, Name: name,
+			ID: id, Kind: graph.KindFunction, Name: name,
 			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
 			Language: "python", Meta: map[string]any{"signature": "def " + name + "(...)"},
 		})

@@ -102,6 +102,9 @@ func (e *TypeScriptExtractor) Extract(filePath string, src []byte) (*parser.Extr
 	// Call sites.
 	e.extractCalls(root, src, filePath, result)
 
+	// Variables.
+	e.extractVariables(root, src, filePath, fileNode.ID, result)
+
 	return result, nil
 }
 
@@ -182,10 +185,18 @@ func (e *TypeScriptExtractor) extractInterfaces(root *sitter.Node, src []byte, f
 		name := m.Captures["iface.name"].Text
 		def := m.Captures["iface.def"]
 		id := filePath + "::" + name
+
+		// Walk the interface body to extract method/property signature names.
+		var methods []string
+		if def.Node != nil {
+			methods = extractTSInterfaceMethods(def.Node, src)
+		}
+
 		result.Nodes = append(result.Nodes, &graph.Node{
 			ID: id, Kind: graph.KindInterface, Name: name,
 			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
 			Language: "typescript",
+			Meta:     map[string]any{"methods": methods},
 		})
 		result.Edges = append(result.Edges, &graph.Edge{
 			From: fileID, To: id, Kind: graph.EdgeDefines, FilePath: filePath, Line: def.StartLine + 1,
@@ -220,6 +231,83 @@ func (e *TypeScriptExtractor) extractImports(root *sitter.Node, src []byte, file
 			Kind: graph.EdgeImports, FilePath: filePath, Line: path.StartLine + 1,
 		})
 	}
+}
+
+func (e *TypeScriptExtractor) extractVariables(root *sitter.Node, src []byte, filePath, fileID string, result *parser.ExtractionResult) {
+	matches, _ := parser.RunQuery(tsQVar, e.lang, root, src)
+
+	// Collect names already extracted as arrow functions so we skip them.
+	arrowNames := make(map[string]bool)
+	for _, n := range result.Nodes {
+		if n.Kind == graph.KindFunction && n.FilePath == filePath {
+			arrowNames[n.Name] = true
+		}
+	}
+
+	for _, m := range matches {
+		name := m.Captures["var.name"].Text
+		def := m.Captures["var.def"]
+
+		// Skip variables already captured as arrow functions.
+		if arrowNames[name] {
+			continue
+		}
+
+		// Only extract module-level variables: the lexical_declaration's parent
+		// should be the program (root) node or an export_statement whose parent
+		// is the program node.
+		parent := def.Node.Parent()
+		if parent != nil && parent.Type() == "export_statement" {
+			parent = parent.Parent()
+		}
+		if parent == nil || parent.Type() != "program" {
+			continue
+		}
+
+		id := filePath + "::" + name
+		result.Nodes = append(result.Nodes, &graph.Node{
+			ID: id, Kind: graph.KindVariable, Name: name,
+			FilePath: filePath, StartLine: def.StartLine + 1, EndLine: def.EndLine + 1,
+			Language: "typescript",
+		})
+		result.Edges = append(result.Edges, &graph.Edge{
+			From: fileID, To: id, Kind: graph.EdgeDefines, FilePath: filePath, Line: def.StartLine + 1,
+		})
+	}
+}
+
+// extractTSInterfaceMethods walks children of an interface_declaration node
+// to find method_signature and property_signature entries and returns their names.
+func extractTSInterfaceMethods(ifaceNode *sitter.Node, src []byte) []string {
+	var methods []string
+	// Find the interface_body child.
+	var body *sitter.Node
+	for i := 0; i < int(ifaceNode.NamedChildCount()); i++ {
+		child := ifaceNode.NamedChild(i)
+		if child.Type() == "interface_body" || child.Type() == "object_type" {
+			body = child
+			break
+		}
+	}
+	if body == nil {
+		return methods
+	}
+
+	for i := 0; i < int(body.NamedChildCount()); i++ {
+		child := body.NamedChild(i)
+		switch child.Type() {
+		case "method_signature", "property_signature":
+			// The first named child is typically the property_identifier (name).
+			for j := 0; j < int(child.NamedChildCount()); j++ {
+				nameNode := child.NamedChild(j)
+				if nameNode.Type() == "property_identifier" {
+					methods = append(methods, nameNode.Content(src))
+					break
+				}
+			}
+		}
+	}
+	return methods
 }
 
 func (e *TypeScriptExtractor) extractCalls(root *sitter.Node, src []byte, filePath string, result *parser.ExtractionResult) {
