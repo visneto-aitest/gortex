@@ -332,7 +332,7 @@ Gortex is running as an MCP server. You MUST use graph queries instead of file r
 | ` + "`Read`" + ` to find a function             | ` + "`get_symbol`" + ` or ` + "`get_editing_context`" + `    |
 | Multiple ` + "`get_symbol`" + ` calls           | ` + "`batch_symbols`" + ` (one call for N symbols) |
 | ` + "`Grep`" + ` for references                 | ` + "`find_usages`" + ` (zero false positives)     |
-| ` + "`Grep`" + ` to find a symbol by name       | ` + "`search_symbols`" + `                         |
+| ` + "`Grep`" + ` to find a symbol by name       | ` + "`search_symbols`" + ` (BM25 + camelCase-aware)|
 | ` + "`Read`" + ` to understand a file           | ` + "`get_file_summary`" + ` or ` + "`get_editing_context`" + ` |
 | ` + "`Read`" + ` multiple files to trace calls  | ` + "`get_call_chain`" + ` / ` + "`get_callers`" + `         |
 | Guessing an import path               | ` + "`find_import_path`" + `                       |
@@ -395,7 +395,7 @@ Quick reference for all Gortex MCP tools and the knowledge graph schema.
 | Tool | What it gives you |
 |------|-------------------|
 | graph_stats | Node/edge counts by kind and language — session start orientation |
-| search_symbols | Find symbols by name (substring match). Use instead of Grep |
+| search_symbols | Find symbols by keyword (BM25 + camelCase-aware). Use instead of Grep |
 | get_symbol | Single symbol: location, signature, edges. Use instead of Read |
 | get_file_summary | All symbols + imports in a file. Use instead of Read |
 | get_editing_context | **Primary pre-edit tool.** Symbols, signatures, callers, callees for a file |

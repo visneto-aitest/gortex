@@ -27,8 +27,8 @@ func (s *Server) registerCoreTools() {
 
 	s.mcpServer.AddTool(
 		mcp.NewTool("search_symbols",
-			mcp.WithDescription("Use instead of Grep to find symbols by name across the whole codebase. Faster and token-free compared to searching file contents."),
-			mcp.WithString("query", mcp.Required(), mcp.Description("Symbol name to search for")),
+			mcp.WithDescription("Use instead of Grep to find symbols across the whole codebase. Supports natural language queries with camelCase-aware tokenization and BM25 ranking — 'validate token auth' finds validateToken, AuthMiddleware, parseJWT."),
+			mcp.WithString("query", mcp.Required(), mcp.Description("Search query — can be symbol name, concept, or multiple keywords")),
 			mcp.WithNumber("limit", mcp.Description("Max results (default: 20)")),
 		),
 		s.handleSearchSymbols,
