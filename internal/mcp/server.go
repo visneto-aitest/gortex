@@ -46,6 +46,7 @@ func NewServer(engine *query.Engine, g *graph.Graph, idx *indexer.Indexer, watch
 	s.registerCoreTools()
 	s.registerCodingTools()
 	s.registerAnalysisTools()
+	s.registerResources()
 	return s
 }
 
