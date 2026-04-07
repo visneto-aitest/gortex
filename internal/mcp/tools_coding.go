@@ -69,6 +69,15 @@ func (s *Server) registerCodingTools() {
 	)
 
 	s.mcpServer.AddTool(
+		mcp.NewTool("get_test_targets",
+			mcp.WithDescription("Given changed symbol IDs, traces the call graph to find test files and test functions that exercise those symbols. Use after editing to know exactly which tests to run — no guessing, no running the entire suite."),
+			mcp.WithString("symbol_ids", mcp.Required(), mcp.Description("Comma-separated list of changed symbol IDs")),
+			mcp.WithNumber("depth", mcp.Description("Caller traversal depth (default: 3)")),
+		),
+		s.handleGetTestTargets,
+	)
+
+	s.mcpServer.AddTool(
 		mcp.NewTool("get_recent_changes",
 			mcp.WithDescription("Returns files and symbols that changed since the last call (watch mode only). Use to re-orient after the user edits files outside of Claude Code's view, without re-reading anything."),
 			mcp.WithString("since", mcp.Description("ISO 8601 timestamp (omit for all changes since index)")),
@@ -456,5 +465,137 @@ func (s *Server) handleBatchSymbols(_ context.Context, req mcp.CallToolRequest) 
 	return mcp.NewToolResultJSON(map[string]any{
 		"symbols": results,
 		"total":   len(results),
+	})
+}
+
+// Test file patterns by language.
+var testFilePatterns = []struct {
+	suffix string
+	lang   string
+}{
+	{"_test.go", "go"},
+	{".test.ts", "typescript"},
+	{".test.tsx", "typescript"},
+	{".spec.ts", "typescript"},
+	{".test.js", "javascript"},
+	{".spec.js", "javascript"},
+	{"_test.py", "python"},
+	{"test_", "python"},
+	{"_test.rs", "rust"},
+	{"Test.java", "java"},
+	{"_test.rb", "ruby"},
+	{"_test.exs", "elixir"},
+	{"_test.kt", "kotlin"},
+	{"Tests.swift", "swift"},
+	{"Test.scala", "scala"},
+	{"Test.php", "php"},
+	{"Test.cs", "csharp"},
+}
+
+func isTestFile(path string) bool {
+	for _, p := range testFilePatterns {
+		if strings.Contains(path, p.suffix) {
+			return true
+		}
+	}
+	return strings.Contains(path, "__tests__/") || strings.Contains(path, "/test/")
+}
+
+func (s *Server) handleGetTestTargets(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	idsStr, err := req.RequireString("symbol_ids")
+	if err != nil {
+		return mcp.NewToolResultError("symbol_ids is required"), nil
+	}
+
+	ids := strings.Split(idsStr, ",")
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+
+	depth := req.GetInt("depth", 3)
+
+	// For each symbol, trace callers and collect test nodes.
+	type testTarget struct {
+		File      string   `json:"file"`
+		Functions []string `json:"functions"`
+	}
+
+	// Map: test file -> set of test function names.
+	testFiles := make(map[string]map[string]bool)
+	// Track which changed symbols are covered.
+	coveredSymbols := make(map[string]bool)
+
+	for _, id := range ids {
+		node := s.engine.GetSymbol(id)
+		if node == nil {
+			continue
+		}
+
+		// Get all callers up to depth.
+		callers := s.engine.GetCallers(id, query.QueryOptions{Depth: depth, Limit: 100, Detail: "brief"})
+		for _, cn := range callers.Nodes {
+			if !isTestFile(cn.FilePath) {
+				continue
+			}
+			coveredSymbols[id] = true
+			if testFiles[cn.FilePath] == nil {
+				testFiles[cn.FilePath] = make(map[string]bool)
+			}
+			if cn.Kind == graph.KindFunction || cn.Kind == graph.KindMethod {
+				testFiles[cn.FilePath][cn.Name] = true
+			}
+		}
+
+		// Also check if the symbol itself is in a test file (e.g. test helper).
+		if isTestFile(node.FilePath) {
+			coveredSymbols[id] = true
+			if testFiles[node.FilePath] == nil {
+				testFiles[node.FilePath] = make(map[string]bool)
+			}
+		}
+	}
+
+	// Build result.
+	var targets []testTarget
+	for file, funcs := range testFiles {
+		var names []string
+		for name := range funcs {
+			names = append(names, name)
+		}
+		targets = append(targets, testTarget{
+			File:      file,
+			Functions: names,
+		})
+	}
+
+	// Build run commands (Go-specific for now, extensible later).
+	var runCommands []string
+	for _, t := range targets {
+		if strings.HasSuffix(t.File, "_test.go") {
+			dir := filepath.Dir(t.File)
+			if len(t.Functions) > 0 {
+				runCommands = append(runCommands,
+					fmt.Sprintf("go test -run %s ./%s/", strings.Join(t.Functions, "|"), dir))
+			} else {
+				runCommands = append(runCommands,
+					fmt.Sprintf("go test ./%s/", dir))
+			}
+		}
+	}
+
+	// Uncovered symbols (no test found).
+	var uncovered []string
+	for _, id := range ids {
+		if !coveredSymbols[id] {
+			uncovered = append(uncovered, id)
+		}
+	}
+
+	return mcp.NewToolResultJSON(map[string]any{
+		"test_targets":  targets,
+		"run_commands":  runCommands,
+		"total_files":   len(targets),
+		"uncovered":     uncovered,
+		"coverage_note": fmt.Sprintf("%d/%d changed symbols have test coverage", len(coveredSymbols), len(ids)),
 	})
 }
