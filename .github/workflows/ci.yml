@@ -48,6 +48,31 @@ jobs:
           version: v2.11.4
           args: --timeout=5m
 
+  build-onnx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: Install ONNX Runtime
+        run: |
+          wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-linux-x64-1.24.4.tgz
+          tar xzf onnxruntime-linux-x64-1.24.4.tgz
+          sudo cp onnxruntime-linux-x64-1.24.4/lib/libonnxruntime.so* /usr/local/lib/
+          sudo ldconfig
+
+      - name: Build with ONNX tag
+        run: go build -tags embeddings_onnx -o gortex-onnx ./cmd/gortex/
+
+      - name: Build with Hugot tag
+        run: go build -tags embeddings_hugot -o gortex-hugot ./cmd/gortex/
+
+      - name: Build with GoMLX tag
+        run: go build -tags embeddings_gomlx -o gortex-gomlx ./cmd/gortex/
+
   benchmark:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
