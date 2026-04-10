@@ -199,6 +199,11 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Pass contract registry to MCP server.
+	if cr := idx.ContractRegistry(); cr != nil {
+		srv.SetContractRegistry(cr)
+	}
+
 	// Multi-repo indexing.
 	if mi != nil {
 		if _, err := mi.IndexAll(); err != nil {

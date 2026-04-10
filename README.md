@@ -294,6 +294,7 @@ cd web && npm run dev
 | **Communities** | Community cards with cohesion bars, expandable members |
 | **Processes** | Execution flow table with step lists |
 | **Analysis** | Dead code, hotspots, cycles, index health — 4 tabs |
+| **Contracts** | API contracts (HTTP, gRPC, GraphQL, topics, WebSocket, env vars) with provider/consumer matching |
 | **AI Chat** | LLM-powered chat with code context (placeholder) |
 
 The legacy embedded web UI (Sigma.js on `:8765`) is still available via `gortex serve --web`.
@@ -319,6 +320,31 @@ gortex serve --index /path/to/repo --bridge --port 8765
 | `/stats` | GET | Graph statistics by kind and language |
 
 CORS is enabled by default (`--cors-origin '*'`). The bridge can serve the web UI on the same port with `--web`.
+
+## Cross-Repo API Contracts
+
+Gortex detects API contracts across repos and matches providers to consumers:
+
+```bash
+# After indexing, contracts are auto-detected
+gortex bridge --index . --web
+
+# Via MCP tools
+get_contracts                    # list all detected contracts
+check_contracts                  # find mismatches and orphans
+```
+
+| Contract Type | Detection | Provider | Consumer |
+|--------------|-----------|----------|----------|
+| **HTTP Routes** | Framework annotations (gin, Express, FastAPI, Spring, etc.) | Route handler | HTTP client calls (fetch, http.Get) |
+| **gRPC** | Proto service definitions | Service RPC | Client stub calls |
+| **GraphQL** | Schema type/field definitions | Schema | Query/mutation strings |
+| **Message Topics** | Pub/sub patterns (Kafka, NATS, RabbitMQ) | Publish calls | Subscribe calls |
+| **WebSocket** | Event emit/listen patterns | emit() | on() |
+| **Env Vars** | os.Getenv, process.env, .env files | Setenv / .env | Getenv / process.env |
+| **OpenAPI** | Swagger/OpenAPI spec files | Spec paths | (linked to HTTP routes) |
+
+Contracts are normalized to canonical IDs (e.g., `http::GET::/api/users/{id}`) and matched across repos to detect orphan providers/consumers and mismatches.
 
 ## Per-Community Skills
 

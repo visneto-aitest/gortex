@@ -11,6 +11,8 @@ const (
 	EdgeExtends      EdgeKind = "extends"
 	EdgeReferences   EdgeKind = "references"
 	EdgeMemberOf     EdgeKind = "member_of"
+	EdgeProvides     EdgeKind = "provides"
+	EdgeConsumes     EdgeKind = "consumes"
 )
 
 type Edge struct {

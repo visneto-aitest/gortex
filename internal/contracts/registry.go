@@ -1,0 +1,174 @@
+package contracts
+
+import "sync"
+
+// Registry collects contracts from all repos and provides indexed lookups.
+type Registry struct {
+	mu         sync.RWMutex
+	byID       map[string][]Contract // contractID -> contracts
+	byRepo     map[string][]Contract // repoPrefix -> contracts
+	bySymbol   map[string][]Contract // symbolID -> contracts
+	byFilePath map[string][]Contract // filePath -> contracts
+}
+
+// NewRegistry creates an empty contract registry.
+func NewRegistry() *Registry {
+	return &Registry{
+		byID:       make(map[string][]Contract),
+		byRepo:     make(map[string][]Contract),
+		bySymbol:   make(map[string][]Contract),
+		byFilePath: make(map[string][]Contract),
+	}
+}
+
+// Add inserts a contract into the registry.
+func (r *Registry) Add(c Contract) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID[c.ID] = append(r.byID[c.ID], c)
+	r.byRepo[c.RepoPrefix] = append(r.byRepo[c.RepoPrefix], c)
+	if c.SymbolID != "" {
+		r.bySymbol[c.SymbolID] = append(r.bySymbol[c.SymbolID], c)
+	}
+	r.byFilePath[c.FilePath] = append(r.byFilePath[c.FilePath], c)
+}
+
+// AddAll inserts multiple contracts, assigning the repo prefix to each.
+func (r *Registry) AddAll(contracts []Contract, repoPrefix string) {
+	for i := range contracts {
+		contracts[i].RepoPrefix = repoPrefix
+		r.Add(contracts[i])
+	}
+}
+
+// ByID returns all contracts matching the given contract ID.
+func (r *Registry) ByID(id string) []Contract {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	src := r.byID[id]
+	out := make([]Contract, len(src))
+	copy(out, src)
+	return out
+}
+
+// ByRepo returns all contracts belonging to the given repo prefix.
+func (r *Registry) ByRepo(repoPrefix string) []Contract {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	src := r.byRepo[repoPrefix]
+	out := make([]Contract, len(src))
+	copy(out, src)
+	return out
+}
+
+// BySymbol returns all contracts attached to the given symbol.
+func (r *Registry) BySymbol(symbolID string) []Contract {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	src := r.bySymbol[symbolID]
+	out := make([]Contract, len(src))
+	copy(out, src)
+	return out
+}
+
+// ByFile returns all contracts found in the given file.
+func (r *Registry) ByFile(filePath string) []Contract {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	src := r.byFilePath[filePath]
+	out := make([]Contract, len(src))
+	copy(out, src)
+	return out
+}
+
+// AllIDs returns a deduplicated list of contract IDs in the registry.
+func (r *Registry) AllIDs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.byID))
+	for id := range r.byID {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// All returns every contract in the registry.
+func (r *Registry) All() []Contract {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []Contract
+	seen := make(map[string]bool)
+	for _, contracts := range r.byID {
+		for _, c := range contracts {
+			key := c.ID + "|" + c.FilePath + "|" + c.SymbolID + "|" + string(c.Role)
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// Clear removes all contracts from the registry.
+func (r *Registry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID = make(map[string][]Contract)
+	r.byRepo = make(map[string][]Contract)
+	r.bySymbol = make(map[string][]Contract)
+	r.byFilePath = make(map[string][]Contract)
+}
+
+// EvictRepo removes all contracts belonging to the given repo prefix.
+func (r *Registry) EvictRepo(repoPrefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	contracts := r.byRepo[repoPrefix]
+	if len(contracts) == 0 {
+		return 0
+	}
+
+	// Remove from byID index.
+	for _, c := range contracts {
+		r.byID[c.ID] = removeContract(r.byID[c.ID], c)
+		if len(r.byID[c.ID]) == 0 {
+			delete(r.byID, c.ID)
+		}
+	}
+
+	// Remove from bySymbol index.
+	for _, c := range contracts {
+		if c.SymbolID != "" {
+			r.bySymbol[c.SymbolID] = removeContract(r.bySymbol[c.SymbolID], c)
+			if len(r.bySymbol[c.SymbolID]) == 0 {
+				delete(r.bySymbol, c.SymbolID)
+			}
+		}
+	}
+
+	// Remove from byFilePath index.
+	for _, c := range contracts {
+		r.byFilePath[c.FilePath] = removeContract(r.byFilePath[c.FilePath], c)
+		if len(r.byFilePath[c.FilePath]) == 0 {
+			delete(r.byFilePath, c.FilePath)
+		}
+	}
+
+	removed := len(contracts)
+	delete(r.byRepo, repoPrefix)
+	return removed
+}
+
+func removeContract(contracts []Contract, target Contract) []Contract {
+	out := contracts[:0]
+	for _, c := range contracts {
+		if c.FilePath == target.FilePath && c.SymbolID == target.SymbolID &&
+			c.Role == target.Role && c.ID == target.ID && c.RepoPrefix == target.RepoPrefix {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}

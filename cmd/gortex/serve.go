@@ -237,6 +237,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Pass contract registry to MCP server.
+		if cr := idx.ContractRegistry(); cr != nil {
+			srv.SetContractRegistry(cr)
+		}
+
 		// Start watcher if requested.
 		if serveWatch {
 			wcfg := cfg.Watch

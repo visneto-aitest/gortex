@@ -11,12 +11,13 @@ const (
 	KindInterface NodeKind = "interface"
 	KindVariable  NodeKind = "variable"
 	KindImport    NodeKind = "import"
+	KindContract  NodeKind = "contract"
 )
 
 var validNodeKinds = map[NodeKind]bool{
 	KindFile: true, KindPackage: true, KindFunction: true,
 	KindMethod: true, KindType: true, KindInterface: true,
-	KindVariable: true, KindImport: true,
+	KindVariable: true, KindImport: true, KindContract: true,
 }
 
 type Node struct {

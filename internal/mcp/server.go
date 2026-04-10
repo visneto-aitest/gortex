@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/zzet/gortex/internal/analysis"
 	"github.com/zzet/gortex/internal/config"
+	"github.com/zzet/gortex/internal/contracts"
 	"github.com/zzet/gortex/internal/graph"
 	"github.com/zzet/gortex/internal/indexer"
 	"github.com/zzet/gortex/internal/query"
@@ -79,7 +80,8 @@ type Server struct {
 	analysisMu   sync.RWMutex
 	session      *sessionState
 	symHistory   *symbolHistory
-	guardRules   []config.GuardRule
+	guardRules       []config.GuardRule
+	contractRegistry *contracts.Registry
 }
 
 // sessionState tracks recent agent activity for context recovery after compaction.
@@ -253,6 +255,11 @@ func (s *Server) ServeStdio() error {
 // This is used by the eval-server to wire tool dispatch into an HTTP handler.
 func (s *Server) MCPServer() *server.MCPServer {
 	return s.mcpServer
+}
+
+// SetContractRegistry sets the contract registry for the MCP server.
+func (s *Server) SetContractRegistry(r *contracts.Registry) {
+	s.contractRegistry = r
 }
 
 // SetWatcher sets the watcher after background initialization and registers

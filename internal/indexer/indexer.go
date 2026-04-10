@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/zzet/gortex/internal/config"
+	"github.com/zzet/gortex/internal/contracts"
 	"github.com/zzet/gortex/internal/embedding"
 	"github.com/zzet/gortex/internal/graph"
 	"github.com/zzet/gortex/internal/parser"
@@ -49,6 +50,9 @@ type Indexer struct {
 	// When empty, the indexer operates in single-repo mode (backward compatible).
 	repoPrefix string
 
+	// contractRegistry holds detected API contracts (HTTP routes, gRPC, etc.).
+	contractRegistry *contracts.Registry
+
 	// embedder is the optional embedding provider for semantic search.
 	embedder embedding.Provider
 
@@ -78,6 +82,9 @@ func (idx *Indexer) Graph() *graph.Graph { return idx.graph }
 
 // Search returns the search backend.
 func (idx *Indexer) Search() search.Backend { return idx.search }
+
+// ContractRegistry returns the contract registry populated during indexing.
+func (idx *Indexer) ContractRegistry() *contracts.Registry { return idx.contractRegistry }
 
 // RootPath returns the root path used for relative path computation.
 func (idx *Indexer) RootPath() string { return idx.rootPath }
@@ -304,6 +311,9 @@ func (idx *Indexer) Index(root string) (*IndexResult, error) {
 
 	// Build search index.
 	idx.buildSearchIndex()
+
+	// Extract API contracts (HTTP routes, gRPC services, etc.).
+	idx.extractContracts()
 
 	// Auto-upgrade to Bleve if above threshold.
 	if idx.search.Count() >= search.AutoThreshold {
@@ -622,6 +632,9 @@ func (idx *Indexer) IncrementalReindex(root string) (*IndexResult, error) {
 	// Rebuild search index to ensure consistency.
 	idx.buildSearchIndex()
 
+	// Re-extract contracts after incremental reindex.
+	idx.extractContracts()
+
 	return &IndexResult{
 		NodeCount:  idx.graph.Stats().TotalNodes,
 		EdgeCount:  idx.graph.Stats().TotalEdges,
@@ -638,6 +651,72 @@ func (idx *Indexer) LastIndexTime() time.Time {
 // TotalDetected returns the total number of files detected during the last full index.
 func (idx *Indexer) TotalDetected() int {
 	return idx.totalDetected
+}
+
+// extractContracts scans all file nodes in the graph and runs contract extractors
+// to detect API contracts (HTTP routes, gRPC services, GraphQL, topics, etc.).
+// Detected contracts are added as graph nodes with provides/consumes edges.
+func (idx *Indexer) extractContracts() {
+	reg := contracts.NewRegistry()
+	extractors := []contracts.Extractor{
+		&contracts.HTTPExtractor{},
+		&contracts.GRPCExtractor{},
+		&contracts.GraphQLExtractor{},
+		&contracts.OpenAPIExtractor{},
+		&contracts.TopicExtractor{},
+		&contracts.WebSocketExtractor{},
+		&contracts.EnvVarExtractor{},
+	}
+
+	for _, fileNode := range idx.graph.AllNodes() {
+		if fileNode.Kind != graph.KindFile {
+			continue
+		}
+
+		absPath := filepath.Join(idx.rootPath, fileNode.FilePath)
+		src, err := os.ReadFile(absPath)
+		if err != nil {
+			continue
+		}
+
+		fileNodes := idx.graph.GetFileNodes(fileNode.FilePath)
+		fileEdges := idx.graph.GetOutEdges(fileNode.ID)
+
+		for _, ext := range extractors {
+			found := ext.Extract(fileNode.FilePath, src, fileNodes, fileEdges)
+			reg.AddAll(found, idx.repoPrefix)
+		}
+	}
+
+	// Add contract nodes and edges to graph.
+	for _, c := range reg.All() {
+		contractNode := &graph.Node{
+			ID:       c.ID,
+			Kind:     graph.KindContract,
+			Name:     c.ID,
+			FilePath: c.FilePath,
+			Language: "contract",
+			Meta:     map[string]any{"type": string(c.Type), "role": string(c.Role)},
+		}
+		idx.graph.AddNode(contractNode)
+
+		edgeKind := graph.EdgeProvides
+		if c.Role == contracts.RoleConsumer {
+			edgeKind = graph.EdgeConsumes
+		}
+		if c.SymbolID != "" {
+			idx.graph.AddEdge(&graph.Edge{
+				From:     c.SymbolID,
+				To:       c.ID,
+				Kind:     edgeKind,
+				FilePath: c.FilePath,
+				Line:     c.Line,
+			})
+		}
+	}
+
+	idx.contractRegistry = reg
+	idx.logger.Info("contracts extracted", zap.Int("count", len(reg.All())))
 }
 
 // IsStale returns true if the file at relPath has been modified on disk since

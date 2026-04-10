@@ -12,6 +12,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/zzet/gortex/internal/analysis"
+	"github.com/zzet/gortex/internal/contracts"
 	"github.com/zzet/gortex/internal/graph"
 	"github.com/zzet/gortex/internal/query"
 )
@@ -174,6 +175,28 @@ func (s *Server) registerEnhancementTools() {
 			mcp.WithBoolean("compact", mcp.Description("One-line-per-edit summary")),
 		),
 		s.handleBatchEdit,
+	)
+
+	// get_contracts
+	s.mcpServer.AddTool(
+		mcp.NewTool("get_contracts",
+			mcp.WithDescription("Lists detected API contracts (HTTP routes, gRPC services, GraphQL, topics, WebSocket, env vars, OpenAPI). Contracts are extracted during indexing."),
+			mcp.WithString("repo", mcp.Description("Filter by repository prefix")),
+			mcp.WithString("type", mcp.Description("Filter by contract type: http, grpc, graphql, topic, ws, env, openapi")),
+			mcp.WithString("role", mcp.Description("Filter by role: provider or consumer")),
+			mcp.WithBoolean("compact", mcp.Description("One-line-per-contract text output")),
+		),
+		s.handleGetContracts,
+	)
+
+	// check_contracts
+	s.mcpServer.AddTool(
+		mcp.NewTool("check_contracts",
+			mcp.WithDescription("Detects contract mismatches: pairs providers with consumers by contract ID and reports orphan providers (no consumer) and orphan consumers (no provider)."),
+			mcp.WithString("repo", mcp.Description("Filter by repository prefix before matching")),
+			mcp.WithBoolean("compact", mcp.Description("Compact text summary")),
+		),
+		s.handleCheckContracts,
 	)
 }
 
@@ -1349,6 +1372,121 @@ func (s *Server) handleBatchEdit(_ context.Context, req mcp.CallToolRequest) (*m
 			"failed":  failedCount,
 			"skipped": skipped,
 			"total":   len(results),
+		},
+	})
+}
+
+// ---------------------------------------------------------------------------
+// handleGetContracts
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleGetContracts(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.contractRegistry == nil {
+		return mcp.NewToolResultError("no contract registry available — index a repository first"), nil
+	}
+
+	repo := req.GetString("repo", "")
+	contractType := req.GetString("type", "")
+	role := req.GetString("role", "")
+
+	var all []contracts.Contract
+	if repo != "" {
+		all = s.contractRegistry.ByRepo(repo)
+	} else {
+		all = s.contractRegistry.All()
+	}
+
+	// Apply filters.
+	var filtered []contracts.Contract
+	for _, c := range all {
+		if contractType != "" && string(c.Type) != contractType {
+			continue
+		}
+		if role != "" && string(c.Role) != role {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+
+	if isCompact(req) {
+		var b strings.Builder
+		for _, c := range filtered {
+			fmt.Fprintf(&b, "%s %s %s %s:%d\n", c.Type, c.Role, c.ID, c.FilePath, c.Line)
+		}
+		if len(filtered) == 0 {
+			b.WriteString("no contracts found\n")
+		}
+		fmt.Fprintf(&b, "total: %d contracts\n", len(filtered))
+		return mcp.NewToolResultText(b.String()), nil
+	}
+
+	// Group by type for structured output.
+	grouped := make(map[string][]contracts.Contract)
+	for _, c := range filtered {
+		grouped[string(c.Type)] = append(grouped[string(c.Type)], c)
+	}
+
+	return mcp.NewToolResultJSON(map[string]any{
+		"contracts": grouped,
+		"total":     len(filtered),
+	})
+}
+
+// ---------------------------------------------------------------------------
+// handleCheckContracts
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleCheckContracts(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.contractRegistry == nil {
+		return mcp.NewToolResultError("no contract registry available — index a repository first"), nil
+	}
+
+	repo := req.GetString("repo", "")
+
+	// If repo is specified, build a filtered registry for matching.
+	reg := s.contractRegistry
+	if repo != "" {
+		reg = contracts.NewRegistry()
+		for _, c := range s.contractRegistry.ByRepo(repo) {
+			reg.Add(c)
+		}
+	}
+
+	result := contracts.Match(reg)
+
+	if isCompact(req) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "matched: %d pairs\n", len(result.Matched))
+		for _, m := range result.Matched {
+			cross := ""
+			if m.CrossRepo {
+				cross = " [cross-repo]"
+			}
+			fmt.Fprintf(&b, "  %s: %s:%d -> %s:%d%s\n",
+				m.ContractID,
+				m.Provider.FilePath, m.Provider.Line,
+				m.Consumer.FilePath, m.Consumer.Line,
+				cross)
+		}
+		fmt.Fprintf(&b, "orphan providers: %d\n", len(result.OrphanProviders))
+		for _, o := range result.OrphanProviders {
+			fmt.Fprintf(&b, "  %s %s:%d\n", o.ID, o.FilePath, o.Line)
+		}
+		fmt.Fprintf(&b, "orphan consumers: %d\n", len(result.OrphanConsumers))
+		for _, o := range result.OrphanConsumers {
+			fmt.Fprintf(&b, "  %s %s:%d\n", o.ID, o.FilePath, o.Line)
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+
+	return mcp.NewToolResultJSON(map[string]any{
+		"matched":          result.Matched,
+		"orphan_providers": result.OrphanProviders,
+		"orphan_consumers": result.OrphanConsumers,
+		"summary": map[string]int{
+			"matched_pairs":    len(result.Matched),
+			"orphan_providers": len(result.OrphanProviders),
+			"orphan_consumers": len(result.OrphanConsumers),
 		},
 	})
 }
