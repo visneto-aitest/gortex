@@ -30,4 +30,5 @@ func RegisterAll(reg *parser.Registry) {
 	reg.Register(NewCSharpExtractor())
 	reg.Register(NewMarkdownExtractor())
 	reg.Register(NewDartExtractor())
+	reg.Register(NewOCamlExtractor())
 }
