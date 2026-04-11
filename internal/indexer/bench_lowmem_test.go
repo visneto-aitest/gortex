@@ -64,7 +64,7 @@ func BenchmarkIndex_Self_Incremental(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		idx.IncrementalReindex("../..")
+		_ = idx.IncrementalReindex("../..")
 	}
 }
 
@@ -78,6 +78,6 @@ func BenchmarkIndex_Self_SingleFile(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		idx.IndexFile("../../internal/mcp/server.go")
+		_ = idx.IndexFile("../../internal/mcp/server.go")
 	}
 }
