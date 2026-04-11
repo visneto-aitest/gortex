@@ -14,11 +14,12 @@ Built for AI coding agents (Claude Code, Kiro, Cursor, Windsurf, Copilot, Contin
 - **Knowledge graph** — every file, symbol, import, call chain, and type relationship in one queryable structure
 - **Multi-repo workspaces** — index multiple repositories into a single graph with cross-repo symbol resolution, project grouping, reference tags, and per-repo scoping
 - **33 languages** — Go, TypeScript, JavaScript, Python, Rust, Java, C#, Kotlin, Swift, Scala, PHP, Ruby, Elixir, C, C++, Dart, OCaml, Lua, Zig, Haskell, Clojure, Erlang, R, Bash/Zsh, SQL, Protobuf, Markdown, HTML, CSS, YAML, TOML, HCL/Terraform, Dockerfile
-- **48 MCP tools** — symbol lookup, call chains, blast radius, community detection, process discovery, contract detection, cycle detection, dead code analysis, scaffolding, inline editing, symbol renaming, multi-repo management, and 6 agent-optimized tools
+- **48 MCP tools** — symbol lookup, call chains, blast radius, community detection, process discovery, contract detection, cycle detection, dead code analysis, scaffolding, inline editing, symbol renaming, multi-repo management, and 18 agent-optimized tools
 - **Semantic search** — hybrid BM25 + vector search with RRF fusion. Built-in GloVe word vectors for offline use, or connect to Ollama/OpenAI for transformer-quality embeddings. Build tags for ONNX, GoMLX, and Hugot offline transformer backends
 - **Type-aware resolution** — infers receiver types from variable declarations, composite literals, and Go constructor conventions to disambiguate same-named methods across types
 - **On-disk persistence** — snapshots the graph on shutdown, restores on startup with incremental re-indexing of only changed files (~200ms vs 3-5s full re-index)
 - **Bridge Mode** — HTTP/JSON API exposing all MCP tools for IDE plugins, CI tools, and web UIs with CORS support and tool discovery endpoint
+- **Token savings tracking** — per-call `tokens_saved` field on source-reading tools + session-level metrics in `graph_stats` (calls counted, tokens returned, tokens saved, efficiency ratio)
 - **7 MCP resources** — lightweight graph context without tool calls
 - **3 MCP prompts** — `pre_commit`, `orientation`, `safe_to_change` for guided workflows
 - **Two-tier config** — global config (`~/.config/gortex/config.yaml`) for projects and repo lists, per-repo `.gortex.yaml` for guards, excludes, and local overrides
@@ -165,7 +166,7 @@ After running `gortex init`, Claude Code automatically starts Gortex via `.mcp.j
 
 `gortex init` detects VS Code (via `.vscode/` directory, `code` in PATH, or VS Code app data directories) and creates:
 
-- **MCP config:** `.vscode/mcp.json` — project-level config for Copilot Chat agent mode. All 48 Gortex tools are available in Copilot's agent mode.
+- **MCP config:** `.vscode/mcp.json` — project-level config for Copilot Chat agent mode. All Gortex tools are available in Copilot's agent mode.
 
 ## Usage with Windsurf
 
@@ -229,7 +230,7 @@ All query commands support `--format text|json|dot` (DOT output for Graphviz vis
 ### Core Navigation
 | Tool | Description |
 |------|-------------|
-| `graph_stats` | Node/edge counts by kind, language, and per-repo stats |
+| `graph_stats` | Node/edge counts by kind, language, per-repo stats, and session token savings |
 | `search_symbols` | Find symbols by name (replaces Grep). Accepts `repo`, `project`, `ref` params |
 | `get_symbol` | Symbol location and signature (replaces Read). Accepts `repo`, `project`, `ref` params |
 | `get_file_summary` | All symbols and imports in a file. Accepts `repo`, `project`, `ref` params |
@@ -250,7 +251,7 @@ All query commands support `--format text|json|dot` (DOT output for Graphviz vis
 | Tool | Description |
 |------|-------------|
 | `get_symbol_signature` | Just the signature, no body |
-| `get_symbol_source` | Source code of a single symbol (80% fewer tokens than Read) |
+| `get_symbol_source` | Source code of a single symbol (80% fewer tokens than Read). Returns `tokens_saved` per call |
 | `batch_symbols` | Multiple symbols with source/callers/callees in one call |
 | `find_import_path` | Correct import path for a symbol |
 | `explain_change_impact` | Risk-tiered blast radius with affected processes |
@@ -457,6 +458,19 @@ go build -tags embeddings_onnx ./cmd/gortex/   # needs: brew install onnxruntime
 go build -tags embeddings_gomlx ./cmd/gortex/  # auto-downloads XLA plugin
 go build -tags embeddings_hugot ./cmd/gortex/  # auto-downloads XLA plugin
 ```
+
+## Token Savings
+
+Gortex tracks how many tokens it saves compared to naive file reads, both per-call and per-session:
+
+- **Per-call:** `get_symbol_source` and other source-reading tools include a `tokens_saved` field in the response, showing the estimated difference between reading the full file vs the targeted symbol.
+- **Session-level:** `graph_stats` returns a `token_savings` object with cumulative metrics:
+  - `calls_counted` — number of source-reading tool invocations
+  - `tokens_returned` — total tokens actually sent to the agent
+  - `tokens_saved` — total tokens avoided vs full file reads
+  - `efficiency_ratio` — multiplier (e.g., 23x means 23x fewer tokens than reading whole files)
+
+Token estimates use `chars / 4` as a standard approximation.
 
 ## Graph Persistence
 
