@@ -34,6 +34,7 @@ Built for AI coding agents (Claude Code, Kiro, Cursor, Windsurf, Copilot, Contin
 - **Web UI** — Sigma.js force-directed visualization with node size proportional to importance
 - **IMPLEMENTS inference** — structural interface satisfaction for Go, TypeScript, Java, Rust, C#, Scala, Swift, Protobuf
 - **PreToolUse + PreCompact + Stop hooks** — PreToolUse enriches Read/Grep/Glob with graph context and redirects to Gortex MCP tools; matching `Task` also briefs spawned subagents with an inline tool-swap table + task-scoped `smart_context` so subagents don't fall back to grep/Read. PreCompact injects a condensed orientation snapshot (index stats, recently-modified symbols, top hotspots, feedback-ranked symbols) before Claude Code compacts the conversation. Stop runs post-task diagnostics (`detect_changes` → `get_test_targets`, `check_guards`, `analyze dead_code`, `contracts check` on modified symbols) so the agent self-corrects before handoff. All hooks degrade silently when the bridge is unreachable
+- **Long-living daemon (optional)** — `gortex daemon start` runs a single shared process that holds the graph for every tracked repo. Each Claude Code / Cursor / Kiro window connects as a thin stdio proxy over a Unix socket, getting per-client session isolation (recent activity, token stats) + cross-repo queries by default. Live fsnotify watching on every tracked repo so file edits flow into the graph without manual reload. `gortex init --global` sets up user-level config; `gortex daemon install-service` installs a LaunchAgent (macOS) or systemd `--user` unit (Linux) so the OS supervises lifecycle and auto-starts at login — no sudo required. Binaries fall back to embedded mode if the daemon isn't running; the feature is additive
 - **Benchmarked** — per-language parsing, query engine, indexer benchmarks
 - **Per-community skills** — `gortex skills` auto-generates SKILL.md per detected community with key files, entry points, cross-community connections, and MCP tool invocations for Claude Code auto-discovery
 - **Eval framework** — SWE-bench harness for A/B benchmarking tool effectiveness with Docker-based environments and multi-model support
@@ -42,6 +43,8 @@ Built for AI coding agents (Claude Code, Kiro, Cursor, Windsurf, Copilot, Contin
 ## Installation
 
 Pre-built binaries are published to [GitHub Releases](https://github.com/zzet/gortex/releases) for linux/amd64, linux/arm64, darwin/amd64 (Intel Mac), and darwin/arm64 (Apple Silicon). Windows support is planned.
+
+**New to Gortex?** After installing, see [docs/onboarding.md](docs/onboarding.md) for the 15-minute walkthrough: `gortex init` → start the server → verify your AI assistant uses graph tools → what to do if it doesn't.
 
 ### macOS — Homebrew
 
@@ -124,32 +127,59 @@ go install github.com/zzet/gortex/cmd/gortex@latest
 
 ## Quick Start
 
+`gortex init` in a terminal opens an interactive wizard that asks whether you want a global daemon or per-project setup, and whether to track the current repo + start the daemon immediately. For scripts or CI the flags below skip the prompt.
+
+### Global mode (recommended when you work across multiple repos)
+
 ```bash
-# Set up Gortex for a project (creates configs for Claude Code, Kiro, Cursor, Copilot, Windsurf, Continue.dev, Cline, OpenCode, Antigravity — auto-detects installed tools)
-gortex init /path/to/repo
+# Interactive: walks you through mode choice + follow-ups
+cd ~/projects/myapp
+gortex init
 
-# Or with codebase analysis for a richer CLAUDE.md
-gortex init --analyze /path/to/repo
+# Non-interactive equivalent (CI / scripts):
+gortex init --global --start --track
 
-# Install/update only the hooks — PreToolUse (Read/Grep/Glob/Task), PreCompact (orientation snapshot), Stop (post-task diagnostics)
-gortex init --hooks /path/to/repo
+# Daemon lifecycle:
+gortex daemon start --detach        # spawn in background
+gortex daemon status                # PID, uptime, memory, tracked repos, sessions
+gortex daemon stop                  # graceful shutdown + final snapshot
+gortex daemon restart               # stop + start
+gortex daemon reload                # re-read config, pick up new/removed repos
+gortex daemon logs -n 50            # tail the log file
 
-# Index a repo and print stats
-gortex status --index /path/to/repo
+# Auto-start at login (launchd on macOS, systemd --user on Linux):
+gortex daemon install-service
+gortex daemon service-status
+gortex daemon uninstall-service
 
-# Start MCP server with watch mode and graph caching
+# Track / untrack repos (daemon-first dispatch; falls back to config-only when no daemon):
+gortex track ~/projects/backend
+gortex untrack backend
+
+# Per-repo status + daemon-wide status share the same command — it picks:
+gortex status
+```
+
+### Per-repo mode
+
+```bash
+# Pick [2] at the wizard, or pass no --global flag and the config stays local:
+gortex init /path/to/repo               # creates .mcp.json, CLAUDE.md, hooks, commands
+gortex init --analyze /path/to/repo     # indexes first for a richer CLAUDE.md
+gortex init --hooks /path/to/repo       # (re)install hooks only
+
+# Run the MCP server standalone (auto-detects daemon via stdio; --no-daemon forces embedded):
 gortex serve --index /path/to/repo --watch
+gortex serve --no-daemon --watch        # explicit embedded mode
+```
 
-# Generate per-community skills for Claude Code
-gortex skills /path/to/repo
+### Other commands
 
-# Start HTTP bridge API for external integrations
-gortex bridge --index /path/to/repo --web --cors-origin '*'
-
-# Multi-repo: track additional repos and set active project
-gortex serve --index /path/to/repo --track /path/to/other-repo --project my-project
-gortex track /path/to/another-repo
-gortex untrack /path/to/another-repo
+```bash
+gortex skills /path/to/repo              # generate per-community SKILL.md files for Claude Code
+gortex bridge --index . --web            # HTTP bridge API + web graph UI at :4747
+gortex savings                           # cumulative tokens saved + $ avoided across sessions
+gortex version
 ```
 
 ## Multi-Repo Workspaces

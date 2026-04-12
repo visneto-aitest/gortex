@@ -46,6 +46,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		root = args[0]
 	}
+
+	// Interactive wizard: only when no mode flag was passed AND we have
+	// a terminal on stdin. CI / scripted invocations fall through to the
+	// historical per-repo default silently. --hooks short-circuits both
+	// the wizard and the global path — it's a narrow "update hooks only"
+	// operation that shouldn't nag.
+	if !initGlobal && !initHooksOnly && !cmd.Flags().Changed("global") && isInteractive() {
+		if choice, ran := runInteractiveInit(os.Stdin, cmd.ErrOrStderr()); ran {
+			initGlobal = choice.Global
+			initTrackRepo = choice.Track
+			initStartDaemon = choice.Start
+		}
+	}
+
 	if initGlobal {
 		return runInitGlobal(cmd, root)
 	}
