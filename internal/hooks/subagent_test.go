@@ -58,6 +58,42 @@ func TestEnrichTask_Briefing(t *testing.T) {
 	if !strings.Contains(result.context, "handleHook") {
 		t.Errorf("missing recent modifications:\n%s", result.context)
 	}
+
+	// Tool-swap guidance must be inlined because subagents don't see CLAUDE.md.
+	for _, needle := range []string{
+		"get_symbol_source",
+		"get_editing_context",
+		"search_symbols",
+		"find_usages",
+		"smart_context",
+	} {
+		if !strings.Contains(result.context, needle) {
+			t.Errorf("briefing missing Gortex tool guidance for %q:\n%s", needle, result.context)
+		}
+	}
+}
+
+// TestEnrichTask_AlwaysIncludesToolGuidance ensures the tool-swap table is
+// present even when smart_context and history return nothing. Subagents must
+// not be able to reach a state where they receive stats but no guidance to
+// use graph tools over Read/Grep.
+func TestEnrichTask_AlwaysIncludesToolGuidance(t *testing.T) {
+	srv := newFakeBridge(map[string]string{
+		"graph_stats": `{"total_nodes":1,"total_edges":0,"by_language":{"go":1}}`,
+	})
+	defer srv.Close()
+	port := portFromURL(t, srv.URL)
+
+	result := enrichTask(map[string]any{
+		"description": "x",
+		"prompt":      "y",
+	}, port)
+	if result.context == "" {
+		t.Fatal("expected briefing")
+	}
+	if !strings.Contains(result.context, "Use Gortex MCP tools instead of Read/Grep/Glob") {
+		t.Errorf("tool guidance header missing:\n%s", result.context)
+	}
 }
 
 func TestEnrichTask_OnlyStats_StillBriefs(t *testing.T) {

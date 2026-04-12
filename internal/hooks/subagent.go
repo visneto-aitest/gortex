@@ -38,7 +38,11 @@ func enrichTask(toolInput map[string]any, port int) enrichResult {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("[Gortex] Subagent briefing — prefer graph tools over Read/Grep:\n\n")
+	sb.WriteString("[Gortex] Subagent briefing — this repo has a Gortex MCP server.\n")
+	sb.WriteString("Subagents don't inherit CLAUDE.md, so the rules below are restated inline:\n\n")
+
+	sb.WriteString(gortexToolGuidance)
+	sb.WriteString("\n")
 
 	if summary := renderStatsSummary(stats); summary != "" {
 		sb.WriteString("**Index:** ")
@@ -58,10 +62,26 @@ func enrichTask(toolInput map[string]any, port int) enrichResult {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("_Start with `smart_context` / `get_editing_context` / `get_symbol_source` — avoid re-exploring via Read/Grep._\n")
+	sb.WriteString("_First call: `smart_context` with your task description. Before editing any file: `get_editing_context`. Never Read/Grep an indexed source file._\n")
 
 	return enrichResult{context: sb.String()}
 }
+
+// gortexToolGuidance is the condensed tool-swap reference injected into every
+// subagent briefing. Kept short (~12 lines) so the token overhead per Task
+// spawn stays small; the full table lives in CLAUDE.md for parent-agent use.
+const gortexToolGuidance = "### Use Gortex MCP tools instead of Read/Grep/Glob\n" +
+	"\n" +
+	"| Instead of...                    | Use...                                |\n" +
+	"|----------------------------------|---------------------------------------|\n" +
+	"| `Read` a whole source file       | `get_symbol_source` (one symbol)      |\n" +
+	"| `Read` to understand a file      | `get_editing_context` / `get_file_summary` |\n" +
+	"| `Grep` for a symbol              | `search_symbols` (BM25, camelCase)    |\n" +
+	"| `Grep` for references            | `find_usages` (zero false positives)  |\n" +
+	"| `Grep` to find callers           | `get_callers` / `get_call_chain`      |\n" +
+	"| `Glob` over source files         | `search_symbols` (returns file paths) |\n" +
+	"| Many Read calls to explore       | `smart_context` (one call)            |\n" +
+	"| Reading to pick tests to run     | `get_test_targets`                    |\n"
 
 // renderTaskContext calls smart_context with the subagent task text and
 // returns a compacted body. Falls back to empty on any error.
