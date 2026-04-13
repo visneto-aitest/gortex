@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -34,6 +36,14 @@ type realController struct {
 	// onShutdown is invoked by the Shutdown method. Used by the daemon
 	// main to flush savings, close the snapshot store, etc.
 	onShutdown func() error
+
+	// ready flips to true once warmup (per-repo re-index + watcher
+	// startup) finishes. The socket accepts connections before this —
+	// queries against not-yet-indexed repos return partial results
+	// until ready is true. warmupSeconds records how long warmup took
+	// so status can surface it.
+	ready          atomic.Bool
+	warmupSeconds  atomic.Int64
 }
 
 // Track indexes a new repository and persists it to the global config.
@@ -207,9 +217,29 @@ func (c *realController) Status(_ context.Context) (daemon.StatusResponse, error
 	runtime.ReadMemStats(&mem)
 
 	return daemon.StatusResponse{
-		TrackedRepos: tracked,
-		MemoryBytes:  mem.Alloc,
+		TrackedRepos:  tracked,
+		MemoryBytes:   mem.Alloc,
+		Ready:         c.ready.Load(),
+		WarmupSeconds: c.warmupSeconds.Load(),
 	}, nil
+}
+
+// AttachWatcher is called by warmup to hand over the MultiWatcher once
+// it has been initialized. Until this is called, realController.Track
+// skips the per-repo watcher attach — a newly-tracked repo gets its
+// watcher when the warmup-constructed MultiWatcher iterates
+// mi.AllMetadata() at startup.
+func (c *realController) AttachWatcher(mw *indexer.MultiWatcher) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.multiWatcher = mw
+}
+
+// MarkReady flips the ready flag and records how long warmup took.
+// Safe to call concurrently with Status (atomic loads on the read side).
+func (c *realController) MarkReady(d time.Duration) {
+	c.warmupSeconds.Store(int64(d.Seconds()))
+	c.ready.Store(true)
 }
 
 // Shutdown gives the caller (the daemon main) a chance to flush any

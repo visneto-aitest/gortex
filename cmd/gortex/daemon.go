@@ -98,34 +98,39 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 	logger := newLogger()
 	srv := daemon.New(daemon.SocketPath(), canonicalVersion(), logger)
 
-	// Build the production state: graph, multi-indexer, config manager,
-	// MCP server. The daemon owns one of each — shared by every session
-	// that connects.
+	// Fast path: snapshot load + indexer + MCP server wiring. The
+	// per-repo TrackRepoCtx loop and MultiWatcher init are deferred to
+	// warmupDaemonState below so the socket opens immediately instead
+	// of waiting 30–60s for contract re-extraction across every tracked
+	// repo.
 	state, err := buildDaemonState(logger)
 	if err != nil {
 		return fmt.Errorf("build daemon state: %w", err)
 	}
 
-	srv.Controller = &realController{
+	controller := &realController{
 		graph:         state.graph,
 		multiIndexer:  state.multiIndexer,
 		configManager: state.configManager,
-		multiWatcher:  state.multiWatcher,
 		logger:        logger,
-		onShutdown: func() error {
-			// Stop watchers first so no late events race the snapshot
-			// write — we want the snapshot to reflect a quiescent graph,
-			// not one being mutated by an in-flight re-index.
-			if state.multiWatcher != nil {
-				_ = state.multiWatcher.Stop()
-			}
-			saveSnapshot(state.graph, version, logger)
-			if state.mcpServer != nil {
-				_ = state.mcpServer.FlushSavings()
-			}
-			return nil
-		},
 	}
+	controller.onShutdown = func() error {
+		// Stop watchers first so no late events race the snapshot
+		// write — we want the snapshot to reflect a quiescent graph,
+		// not one being mutated by an in-flight re-index.
+		controller.mu.Lock()
+		mw := controller.multiWatcher
+		controller.mu.Unlock()
+		if mw != nil {
+			_ = mw.Stop()
+		}
+		saveSnapshot(state.graph, version, logger)
+		if state.mcpServer != nil {
+			_ = state.mcpServer.FlushSavings()
+		}
+		return nil
+	}
+	srv.Controller = controller
 	srv.MCPDispatcher = newMCPDispatcher(state.mcpServer, state.multiIndexer, logger)
 
 	// Periodic snapshots — 10 minute interval. On a crash we lose at
@@ -141,6 +146,24 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 		"[gortex daemon] listening on %s (pid %d)\n",
 		daemon.SocketPath(), os.Getpid())
+
+	// Warmup runs in the background: re-index tracked repos, extract
+	// contracts, attach file watchers. The daemon is already reachable
+	// on the socket at this point, so clients can connect and start
+	// issuing queries while this work continues. Queries against
+	// not-yet-re-indexed repos still hit the snapshot data loaded in
+	// buildDaemonState — they just won't reflect files that changed
+	// since the snapshot was written until warmup gets to that repo.
+	go func() {
+		start := time.Now()
+		logger.Info("daemon: warmup starting")
+		mw := warmupDaemonState(state, logger)
+		controller.AttachWatcher(mw)
+		elapsed := time.Since(start)
+		controller.MarkReady(elapsed)
+		logger.Info("daemon: ready", zap.Duration("warmup", elapsed))
+	}()
+
 	return srv.Serve()
 }
 
@@ -285,6 +308,12 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(w, "pid         %d\n", st.PID)
 	_, _ = fmt.Fprintf(w, "socket      %s\n", st.SocketPath)
 	_, _ = fmt.Fprintf(w, "uptime      %s\n", formatDuration(time.Duration(st.UptimeSeconds)*time.Second))
+	if st.Ready {
+		_, _ = fmt.Fprintf(w, "state       ready (warmup %s)\n",
+			formatDuration(time.Duration(st.WarmupSeconds)*time.Second))
+	} else {
+		_, _ = fmt.Fprintf(w, "state       warming up (socket is reachable, background re-index in progress)\n")
+	}
 	_, _ = fmt.Fprintf(w, "sessions    %d\n", st.Sessions)
 	if st.MemoryBytes > 0 {
 		_, _ = fmt.Fprintf(w, "memory      %d bytes\n", st.MemoryBytes)

@@ -83,19 +83,6 @@ func buildDaemonState(logger *zap.Logger) (*daemonState, error) {
 		mi = indexer.NewMultiIndexer(g, reg, idx.Search(), cm, logger)
 	}
 
-	// Index every repo listed in the GlobalConfig so proxies can query
-	// them immediately. Skips repos that are already in the graph
-	// (TrackRepo returns nil result for those).
-	if mi != nil {
-		ctx := progress.WithReporter(context.Background(), progress.Nop{})
-		for _, entry := range cm.Global().Repos {
-			if _, err := mi.TrackRepoCtx(ctx, entry); err != nil {
-				logger.Warn("daemon: startup track failed",
-					zap.String("path", entry.Path), zap.Error(err))
-			}
-		}
-	}
-
 	// MCP server wiring. Multi-repo options are passed only when a
 	// ConfigManager is available — otherwise the server runs in
 	// single-repo mode and multi-repo tools return errors.
@@ -125,29 +112,11 @@ func buildDaemonState(logger *zap.Logger) (*daemonState, error) {
 		logger.Warn("daemon: savings persistence disabled", zap.Error(err))
 	}
 
-	// Spin up a MultiWatcher so tracked repos pick up file edits live.
-	// Without this a user editing a source file won't see the graph
-	// update until they explicitly `gortex daemon reload`. Every
-	// currently-tracked repo gets its own per-repo Watcher; new repos
-	// added via the `track` control surface get a watcher attached in
-	// realController.Track (follow-up).
-	var mw *indexer.MultiWatcher
-	if mi != nil {
-		watchCfgs := make(map[string]config.WatchConfig)
-		for prefix := range mi.AllMetadata() {
-			watchCfgs[prefix] = cm.GetRepoConfig(prefix).Watch
-		}
-		var err error
-		mw, err = indexer.NewMultiWatcher(mi, watchCfgs, logger)
-		if err != nil {
-			logger.Warn("daemon: multi-watcher init failed", zap.Error(err))
-		} else if err := mw.Start(); err != nil {
-			logger.Warn("daemon: multi-watcher start failed", zap.Error(err))
-			mw = nil
-		} else {
-			logger.Info("daemon: watching", zap.Int("repos", len(watchCfgs)))
-		}
-	}
+	// MultiWatcher is created in warmupDaemonState after tracked repos
+	// have been re-indexed — NewMultiWatcher needs mi.AllMetadata() to be
+	// populated to attach per-repo watchers. Until then, multiWatcher is
+	// nil; queries still work, but file edits don't flow into the graph
+	// for the few seconds warmup takes.
 
 	return &daemonState{
 		graph:         g,
@@ -155,6 +124,40 @@ func buildDaemonState(logger *zap.Logger) (*daemonState, error) {
 		multiIndexer:  mi,
 		configManager: cm,
 		mcpServer:     srv,
-		multiWatcher:  mw,
 	}, nil
+}
+
+// warmupDaemonState performs the per-repo TrackRepoCtx loop and brings
+// up the MultiWatcher. Split out from buildDaemonState so the daemon can
+// open its socket and accept connections before this work finishes —
+// re-extracting contracts across many repos can take tens of seconds
+// and there's no reason to make clients wait for it.
+func warmupDaemonState(state *daemonState, logger *zap.Logger) *indexer.MultiWatcher {
+	if state.multiIndexer == nil || state.configManager == nil {
+		return nil
+	}
+
+	ctx := progress.WithReporter(context.Background(), progress.Nop{})
+	for _, entry := range state.configManager.Global().Repos {
+		if _, err := state.multiIndexer.TrackRepoCtx(ctx, entry); err != nil {
+			logger.Warn("daemon: startup track failed",
+				zap.String("path", entry.Path), zap.Error(err))
+		}
+	}
+
+	watchCfgs := make(map[string]config.WatchConfig)
+	for prefix := range state.multiIndexer.AllMetadata() {
+		watchCfgs[prefix] = state.configManager.GetRepoConfig(prefix).Watch
+	}
+	mw, err := indexer.NewMultiWatcher(state.multiIndexer, watchCfgs, logger)
+	if err != nil {
+		logger.Warn("daemon: multi-watcher init failed", zap.Error(err))
+		return nil
+	}
+	if err := mw.Start(); err != nil {
+		logger.Warn("daemon: multi-watcher start failed", zap.Error(err))
+		return nil
+	}
+	logger.Info("daemon: watching", zap.Int("repos", len(watchCfgs)))
+	return mw
 }

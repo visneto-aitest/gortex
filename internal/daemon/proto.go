@@ -116,6 +116,12 @@ type StatusResponse struct {
 	TrackedRepos  []TrackedRepoStatus `json:"tracked_repos"`
 	Sessions      int                 `json:"sessions"`
 	MemoryBytes   uint64              `json:"memory_bytes"`
+	// Ready is false while the daemon is still loading the snapshot and
+	// re-indexing tracked repos in the background. The socket is reachable
+	// even when Ready=false; queries against not-yet-indexed repos may
+	// return partial results until warmup completes.
+	Ready          bool  `json:"ready"`
+	WarmupSeconds  int64 `json:"warmup_seconds"`
 }
 
 // TrackedRepoStatus is one row in StatusResponse.TrackedRepos.
