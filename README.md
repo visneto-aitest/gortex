@@ -42,7 +42,7 @@ Built for AI coding agents (Claude Code, Kiro, Cursor, Windsurf, Copilot, Contin
 
 ## Installation
 
-Pre-built binaries are published to [GitHub Releases](https://github.com/zzet/gortex/releases) for linux/amd64, linux/arm64, darwin/amd64 (Intel Mac), and darwin/arm64 (Apple Silicon). Windows support is planned.
+Pre-built binaries are published to [GitHub Releases](https://github.com/zzet/gortex/releases) for linux/amd64, linux/arm64, darwin/amd64 (Intel Mac), and darwin/arm64 (Apple Silicon). Every release is **cosign-signed**, ships **SLSA-3 provenance**, and is **VirusTotal-scanned** — see [Verifying releases](#verifying-releases-supply-chain-security) below. Windows support is planned.
 
 **New to Gortex?** After installing, see [docs/onboarding.md](docs/onboarding.md) for the 15-minute walkthrough: `gortex init` → start the server → verify your AI assistant uses graph tools → what to do if it doesn't.
 
@@ -105,6 +105,52 @@ xattr -d com.apple.quarantine /usr/local/bin/gortex
 ```bash
 gortex version
 ```
+
+### Verifying releases (supply-chain security)
+
+Every GitHub release is:
+
+- **Signed with [cosign](https://github.com/sigstore/cosign)** — keyless via GitHub's OIDC identity. Each artifact ships with matching `.sig` and `.pem` files that cryptographically prove the binary came from this repo's release workflow.
+- **Attested with [SLSA-3 provenance](https://slsa.dev/spec/v1.0/levels#build-l3)** — a `multiple.intoto.jsonl` file attached to each release records the exact commit, builder, and workflow that produced every artifact. Tamper-evident and non-forgeable.
+- **Scanned against ~72 AV engines via [VirusTotal](https://virustotal.com)** — the detection count (e.g. `0 / 72`) is posted in each release's notes, with a link to the full per-engine report.
+
+You don't need to verify manually if you're installing via `brew` / `dpkg` / `rpm` — those paths go through package managers that check integrity themselves. Verification matters when you're redistributing Gortex downstream, running it inside a locked-down enterprise environment, or writing your own installer.
+
+**cosign** — install once via `brew install cosign`, `apt install cosign`, or from [the cosign releases page](https://github.com/sigstore/cosign/releases). Then:
+
+```bash
+TAG=v0.5.3                           # replace with the release you downloaded
+FILE=gortex_linux_amd64.tar.gz       # pick your artifact
+
+BASE="https://github.com/zzet/gortex/releases/download/${TAG}"
+curl -LO "${BASE}/${FILE}"
+curl -LO "${BASE}/${FILE}.sig"
+curl -LO "${BASE}/${FILE}.pem"
+
+cosign verify-blob \
+  --certificate "${FILE}.pem" \
+  --signature "${FILE}.sig" \
+  --certificate-identity-regexp 'https://github\.com/zzet/gortex/\.github/workflows/.+@refs/tags/v.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "${FILE}"
+```
+
+Expected output: `Verified OK`. Anything else — stop and delete the binary.
+
+**SLSA-3** — install [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier/releases) once. Then:
+
+```bash
+curl -LO "${BASE}/multiple.intoto.jsonl"
+
+slsa-verifier verify-artifact "${FILE}" \
+  --provenance-path multiple.intoto.jsonl \
+  --source-uri github.com/zzet/gortex \
+  --source-tag "${TAG}"
+```
+
+Expected output ends with `PASSED: SLSA verification passed`.
+
+**VirusTotal** — open the release page on GitHub. The notes include a per-asset scan table like `gortex_linux_amd64.tar.gz — 0 / 72` with a link to the full report. A non-zero detection on a Go binary is usually a false positive (Go's static linking + stripped symbols trips heuristics), but you should still compare against prior releases before trusting the download.
 
 ### From source
 

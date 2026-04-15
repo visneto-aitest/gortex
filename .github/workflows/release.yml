@@ -7,16 +7,32 @@ on:
 
 permissions:
   contents: write
+  # id-token: write is required for:
+  #   1. cosign keyless signing via GitHub's OIDC token
+  #   2. SLSA-3 provenance generation (the reusable workflow below also sets it)
+  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Expose sha256 hashes of every release artifact so the provenance job
+    # can feed them to the SLSA generator.
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - uses: actions/checkout@v6
         with:
           # goreleaser reads the tag list to build the changelog. Without
           # full history the changelog section will be empty or wrong.
           fetch-depth: 0
+
+      # cosign is installed on the host (outside the goreleaser-cross
+      # container) so keyless OIDC signing can use the runner's identity
+      # token directly — no need to plumb ACTIONS_ID_TOKEN_REQUEST_* vars
+      # through `docker run`.
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
 
       - name: Run GoReleaser (cross-compile via Docker)
         # goreleaser-cross ships osxcross + aarch64/x86_64 gcc toolchains
@@ -39,3 +55,105 @@ jobs:
           # Personal access token with `repo` scope on zzet/homebrew-tap.
           # GITHUB_TOKEN can only push to the source repo, not the tap.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      # Keyless cosign signing: each artifact gets a `.sig` (signature) and
+      # `.pem` (certificate chain binding the signature to this workflow's
+      # GitHub OIDC identity). Consumers verify with:
+      #
+      #   cosign verify-blob \
+      #     --certificate gortex_linux_amd64.tar.gz.pem \
+      #     --signature   gortex_linux_amd64.tar.gz.sig \
+      #     --certificate-identity-regexp 'https://github\.com/zzet/gortex/.*' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     gortex_linux_amd64.tar.gz
+      - name: Sign release artifacts with cosign
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cd dist
+          shopt -s nullglob
+          for f in *.tar.gz *.deb *.rpm *.apk checksums.txt; do
+            echo "Signing $f..."
+            cosign sign-blob \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+          ls -la *.sig *.pem
+
+      # Goreleaser already created the release and uploaded the primary
+      # artifacts. Append .sig + .pem files to the same release so
+      # verification instructions in README point at a single URL set.
+      - name: Upload signatures to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.sig
+            dist/*.pem
+          # softprops/action-gh-release@v2 appends to an existing release
+          # when the tag already exists (it does — goreleaser made it a
+          # moment ago). Never fail_on_unmatched_files here — a failed
+          # signing step should surface as a signing error, not as a
+          # missing-files upload error.
+          fail_on_unmatched_files: false
+
+      - name: Compute artifact hashes for SLSA provenance
+        id: hash
+        run: |
+          cd dist
+          shopt -s nullglob
+          # SLSA reusable generator wants base64-encoded sha256sum output
+          # (one "hash  filename" line per artifact). We hash the primary
+          # artifacts only — .sig/.pem are attestations of these files,
+          # they don't need their own provenance.
+          HASHES=$(sha256sum *.tar.gz *.deb *.rpm *.apk | base64 -w0)
+          echo "hashes=$HASHES" >> "$GITHUB_OUTPUT"
+
+  # SLSA-3 provenance via the OpenSSF reusable workflow. This runs in a
+  # separate, isolated job that the `release` job can't tamper with —
+  # that isolation is what elevates us from SLSA-2 to SLSA-3. Output is
+  # a `multiple.intoto.jsonl` file attached to the release that
+  # consumers verify with https://github.com/slsa-framework/slsa-verifier.
+  provenance:
+    needs: release
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: ${{ needs.release.outputs.hashes }}
+      upload-assets: true
+
+  # VirusTotal scan each primary artifact against ~72 AV engines and
+  # append a results badge to the release notes. Needs a VT_API_KEY
+  # repo secret (free tier, 500 requests/day). Non-blocking — VT
+  # outages shouldn't fail a release.
+  virustotal:
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "${GITHUB_REF#refs/tags/}" --dir dist \
+            --pattern '*.tar.gz' \
+            --pattern '*.deb' \
+            --pattern '*.rpm' \
+            --pattern '*.apk'
+
+      - name: VirusTotal scan + update release body
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            ./dist/*.tar.gz
+            ./dist/*.deb
+            ./dist/*.rpm
+            ./dist/*.apk
+          update_release_body: true
