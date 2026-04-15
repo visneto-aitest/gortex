@@ -2,6 +2,11 @@
 
 [![CI](https://github.com/zzet/gortex/actions/workflows/ci.yml/badge.svg)](https://github.com/zzet/gortex/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/zzet/gortex)](https://goreportcard.com/report/github.com/zzet/gortex)
+[![Latest release](https://img.shields.io/github/v/release/zzet/gortex?logo=github&sort=semver)](https://github.com/zzet/gortex/releases/latest)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zzet/gortex.svg)](https://pkg.go.dev/github.com/zzet/gortex)
+[![Sigstore signed](https://img.shields.io/badge/sigstore-signed-66D4FF?logo=sigstore&logoColor=white)](#verifying-releases-supply-chain-security)
+[![SLSA 3](https://img.shields.io/badge/SLSA-Level%203-green)](https://slsa.dev/spec/v1.0/levels#build-l3)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zzet/gortex/badge)](https://scorecard.dev/viewer/?uri=github.com/zzet/gortex)
 
 Code intelligence engine that indexes repositories into an in-memory knowledge graph and exposes it via CLI, MCP Server, and web UI.
 
@@ -119,7 +124,7 @@ You don't need to verify manually if you're installing via `brew` / `dpkg` / `rp
 **cosign** — install once via `brew install cosign`, `apt install cosign`, or from [the cosign releases page](https://github.com/sigstore/cosign/releases). Then:
 
 ```bash
-TAG=v0.5.3                           # replace with the release you downloaded
+TAG=v0.5.4                           # replace with the release you downloaded
 FILE=gortex_linux_amd64.tar.gz       # pick your artifact
 
 BASE="https://github.com/zzet/gortex/releases/download/${TAG}"
