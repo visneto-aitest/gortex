@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,69 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	n := restored.GetNode("a.go::Foo")
 	require.NotNil(t, n)
 	assert.Equal(t, "Foo", n.Name)
+}
+
+// TestLoadSnapshot_DropsStaleAbsPathNodes guards against the T0.2 symptom
+// of duplicate symbols leaking across daemon sessions. Prior-version code
+// paths occasionally stored nodes with absolute filesystem paths as their
+// IDs; those nodes persisted in snapshots and were restored forever
+// alongside the correctly-prefixed nodes produced by current indexing.
+// loadSnapshot must detect the stale shape and drop it so re-indexing
+// yields a single canonical node per symbol.
+func TestLoadSnapshot_DropsStaleAbsPathNodes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GORTEX_DAEMON_SNAPSHOT", filepath.Join(dir, "snap.gob.gz"))
+
+	orig := graph.New()
+	// Clean, current-shape node — should be restored.
+	orig.AddNode(&graph.Node{
+		ID: "core-api/api/handler.go::Handler.CreateTuck",
+		Name: "CreateTuck", Kind: graph.KindMethod,
+		FilePath: "core-api/api/handler.go", RepoPrefix: "core-api",
+	})
+	// Stale abs-path node — a duplicate of the clean one, must be dropped.
+	orig.AddNode(&graph.Node{
+		ID: "/Users/me/tuck/core-api/api/handler.go::Handler.CreateTuck",
+		Name: "CreateTuck", Kind: graph.KindMethod,
+		FilePath: "/Users/me/tuck/core-api/api/handler.go",
+	})
+	// Edge pointing at the stale node — must be dropped too so the
+	// restored graph contains no dangling references.
+	orig.AddEdge(&graph.Edge{
+		From: "core-api/api/handler.go::Handler.RegisterRoutes",
+		To:   "/Users/me/tuck/core-api/api/handler.go::Handler.CreateTuck",
+		Kind: graph.EdgeCalls,
+	})
+	// Edge between two clean nodes — must survive.
+	orig.AddNode(&graph.Node{
+		ID: "core-api/api/handler.go::Handler.RegisterRoutes",
+		Name: "RegisterRoutes", Kind: graph.KindMethod,
+		FilePath: "core-api/api/handler.go", RepoPrefix: "core-api",
+	})
+	orig.AddEdge(&graph.Edge{
+		From: "core-api/api/handler.go::Handler.RegisterRoutes",
+		To:   "core-api/api/handler.go::Handler.CreateTuck",
+		Kind: graph.EdgeCalls,
+	})
+
+	saveSnapshot(orig, "v-test", zap.NewNop())
+
+	restored := graph.New()
+	loaded, err := loadSnapshot(restored, zap.NewNop())
+	require.NoError(t, err)
+	require.True(t, loaded)
+
+	assert.NotNil(t, restored.GetNode("core-api/api/handler.go::Handler.CreateTuck"),
+		"clean prefixed node must be restored")
+	assert.Nil(t, restored.GetNode("/Users/me/tuck/core-api/api/handler.go::Handler.CreateTuck"),
+		"stale abs-path node must be dropped on load")
+
+	for _, e := range restored.AllEdges() {
+		assert.False(t, strings.HasPrefix(e.From, "/"),
+			"edge From references a dropped stale node: %s → %s", e.From, e.To)
+		assert.False(t, strings.HasPrefix(e.To, "/"),
+			"edge To references a dropped stale node: %s → %s", e.From, e.To)
+	}
 }
 
 func TestLoadSnapshot_MissingFile_NotAnError(t *testing.T) {

@@ -7,12 +7,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"go.uber.org/zap"
 
 	"github.com/zzet/gortex/internal/daemon"
 	"github.com/zzet/gortex/internal/graph"
 )
+
+// isStaleAbsPathID reports whether a node ID begins with an absolute
+// filesystem path — a leftover from a prior-version code path that wrote
+// abs paths into IDs instead of repo-prefixed relative ones. Current
+// indexing never produces such IDs, so any found in a snapshot are stale
+// duplicates of a properly-prefixed node and must be dropped on load.
+func isStaleAbsPathID(id string) bool {
+	return strings.HasPrefix(id, "/")
+}
 
 // snapshotHeader is the first record in a streamed snapshot. NodeCount
 // and EdgeCount let the loader pre-size its work and detect truncation.
@@ -156,6 +166,13 @@ func loadSnapshot(g *graph.Graph, logger *zap.Logger) (loaded bool, err error) {
 		return false, nil
 	}
 
+	// Snapshots can carry stale nodes whose IDs begin with an absolute
+	// filesystem path — leftovers from prior-version indexing bugs. Drop
+	// them on load; re-indexing the tracked repos recreates clean
+	// repo-prefixed replacements. Edges pointing at dropped nodes are
+	// skipped so the graph never contains dangling references.
+	droppedNodes := make(map[string]struct{})
+	var skippedNodes, skippedEdges int
 	for i := 0; i < header.NodeCount; i++ {
 		var n graph.Node
 		if err := dec.Decode(&n); err != nil {
@@ -163,6 +180,11 @@ func loadSnapshot(g *graph.Graph, logger *zap.Logger) (loaded bool, err error) {
 				return false, fmt.Errorf("snapshot truncated: expected %d nodes, got %d", header.NodeCount, i)
 			}
 			return false, fmt.Errorf("decode node %d: %w", i, err)
+		}
+		if isStaleAbsPathID(n.ID) {
+			droppedNodes[n.ID] = struct{}{}
+			skippedNodes++
+			continue
 		}
 		g.AddNode(&n)
 	}
@@ -174,12 +196,22 @@ func loadSnapshot(g *graph.Graph, logger *zap.Logger) (loaded bool, err error) {
 			}
 			return false, fmt.Errorf("decode edge %d: %w", i, err)
 		}
+		if _, drop := droppedNodes[e.From]; drop {
+			skippedEdges++
+			continue
+		}
+		if _, drop := droppedNodes[e.To]; drop {
+			skippedEdges++
+			continue
+		}
 		g.AddEdge(&e)
 	}
 
 	logger.Info("snapshot: loaded",
 		zap.String("path", path),
-		zap.Int("nodes", header.NodeCount),
-		zap.Int("edges", header.EdgeCount))
+		zap.Int("nodes", header.NodeCount-skippedNodes),
+		zap.Int("edges", header.EdgeCount-skippedEdges),
+		zap.Int("stale_nodes_dropped", skippedNodes),
+		zap.Int("stale_edges_dropped", skippedEdges))
 	return true, nil
 }

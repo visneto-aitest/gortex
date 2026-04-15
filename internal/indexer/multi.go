@@ -317,8 +317,18 @@ func (mi *MultiIndexer) TrackRepoCtx(ctx context.Context, entry config.RepoEntry
 	}
 	mi.mu.RUnlock()
 
-	// Determine if we need to prefix (will be multi-repo after adding).
-	willBeMultiRepo := len(mi.repos) >= 1
+	// Determine if we need to prefix. We must consider both repos already
+	// indexed in mi.repos AND the total repos configured — at daemon warmup
+	// TrackRepoCtx is called in a loop over all configured repos, so at
+	// iteration 0 mi.repos is empty while the config already has N entries.
+	// Counting only mi.repos used to leave the first-indexed repo without a
+	// prefix while every later repo got one, producing two ID schemes for
+	// the same graph and halving cross-file edge density.
+	totalConfigured := 1 // ourselves
+	if mi.configMgr != nil {
+		totalConfigured = len(mi.configMgr.Global().Repos)
+	}
+	willBeMultiRepo := len(mi.repos)+1 >= 2 || totalConfigured >= 2
 
 	cfg := mi.configMgr.GetRepoConfig(prefix)
 	idx := New(mi.graph, mi.registry, cfg.Index, mi.logger)
