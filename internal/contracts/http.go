@@ -17,7 +17,7 @@ var _ Extractor = (*HTTPExtractor)(nil)
 
 // SupportedLanguages returns the languages this extractor can analyse.
 func (h *HTTPExtractor) SupportedLanguages() []string {
-	return []string{"go", "typescript", "javascript", "python", "java"}
+	return []string{"go", "typescript", "javascript", "python", "java", "dart"}
 }
 
 // httpPattern describes a single regex pattern that matches an HTTP route
@@ -216,6 +216,32 @@ var httpPatterns = []httpPattern{
 		confidence: 0.7,
 		languages:  []string{"java"},
 	},
+
+	// ---- Dart consumers ----
+	// Dio (the dominant HTTP client in modern Flutter apps). Matches
+	// identifiers like `dio`, `_dio`, `apiDio` etc. invoking a method
+	// with a string-literal path.
+	{
+		re:         regexp.MustCompile(`\b_?\w*[Dd]io\.(get|post|put|delete|patch|head)\(\s*['"]([^'"]+)['"]`),
+		role:       RoleConsumer,
+		methodGrp:  1,
+		pathGrp:    2,
+		framework:  "dio",
+		confidence: 0.9,
+		languages:  []string{"dart"},
+	},
+	// package:http functional API — http.get(Uri.parse('/x')) or
+	// http.post('/x'). The regex captures either the string inside
+	// Uri.parse or the direct literal argument.
+	{
+		re:         regexp.MustCompile(`\bhttp\.(get|post|put|delete|patch|head)\(\s*(?:Uri\.parse\(\s*)?['"]([^'"]+)['"]`),
+		role:       RoleConsumer,
+		methodGrp:  1,
+		pathGrp:    2,
+		framework:  "package:http",
+		confidence: 0.8,
+		languages:  []string{"dart"},
+	},
 }
 
 // Extract scans src for HTTP route patterns and returns contracts.
@@ -304,6 +330,8 @@ func detectLanguage(filePath string) string {
 		return "python"
 	case strings.HasSuffix(filePath, ".java"):
 		return "java"
+	case strings.HasSuffix(filePath, ".dart"):
+		return "dart"
 	default:
 		return ""
 	}
@@ -348,6 +376,14 @@ func filterFileNodes(filePath string, nodes []*graph.Node) []*graph.Node {
 
 // findEnclosingSymbol returns the ID of the nearest function/method that
 // encloses the given line number.  Falls back to "" if none found.
+//
+// Strict containment (StartLine ≤ line ≤ EndLine) is preferred, but some
+// language extractors (notably Dart's tree-sitter path) report EndLine as
+// the signature line rather than the closing brace, so a call on the very
+// next line wouldn't match. When strict containment fails, fall back to
+// the closest-preceding symbol whose EndLine ≥ (line - closeProximity) —
+// the call is most likely inside its body. "" still means nothing's even
+// near enough.
 func findEnclosingSymbol(sortedNodes []*graph.Node, line int) string {
 	best := ""
 	bestStart := 0
@@ -360,7 +396,24 @@ func findEnclosingSymbol(sortedNodes []*graph.Node, line int) string {
 			bestStart = n.StartLine
 		}
 	}
-	return best
+	if best != "" {
+		return best
+	}
+	// Fallback: the closest function/method whose declaration precedes
+	// the line — tolerates off-by-N EndLine reports from extractors that
+	// don't compute the closing brace.
+	fallback := ""
+	fallbackStart := 0
+	for _, n := range sortedNodes {
+		if n.Kind != graph.KindFunction && n.Kind != graph.KindMethod {
+			continue
+		}
+		if n.StartLine <= line && n.StartLine > fallbackStart {
+			fallback = n.ID
+			fallbackStart = n.StartLine
+		}
+	}
+	return fallback
 }
 
 // findFunctionByName returns the ID of a function or method declared in the

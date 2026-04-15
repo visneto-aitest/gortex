@@ -363,11 +363,78 @@ func TestNormalizeHTTPPath(t *testing.T) {
 	}
 }
 
+// TestHTTPExtractor_Dart_Consumers covers T2.1: Dart HTTP client patterns
+// (dio and package:http) now produce consumer contracts. Exercised via
+// short snippets resembling the shape of tuck_app's TuckApiClient
+// methods, including Dart's bare-$id interpolation style that
+// NormalizeHTTPPath collapses to {id}.
+func TestHTTPExtractor_Dart_Consumers(t *testing.T) {
+	src := []byte(`class TuckApiClient {
+  final Dio _dio;
+  TuckApiClient(this._dio);
+
+  Future<void> createTuck(Map<String, dynamic> data) async {
+    await _dio.post('/v1/tucks', data: data);
+  }
+
+  Future<void> deleteTuck(String id) async {
+    await _dio.delete('/v1/tucks/$id');
+  }
+
+  Future<String> listHealth() async {
+    final r = await http.get(Uri.parse('/v1/health'));
+    return r.body;
+  }
+}
+`)
+	nodes := makeNodes("client.dart", []struct {
+		name       string
+		start, end int
+	}{
+		{"createTuck", 5, 7},
+		{"deleteTuck", 9, 11},
+		{"listHealth", 13, 16},
+	})
+
+	ext := &HTTPExtractor{}
+	contracts := ext.Extract("client.dart", src, nodes, nil)
+
+	want := map[string]string{
+		"http::POST::/v1/tucks":        "client.dart::createTuck",
+		"http::DELETE::/v1/tucks/{id}": "client.dart::deleteTuck",
+		"http::GET::/v1/health":        "client.dart::listHealth",
+	}
+	got := map[string]string{}
+	for _, c := range contracts {
+		if c.Role != RoleConsumer {
+			t.Errorf("expected role consumer for %s, got %s", c.ID, c.Role)
+		}
+		got[c.ID] = c.SymbolID
+	}
+	for id, sym := range want {
+		if got[id] != sym {
+			t.Errorf("missing/mismatched consumer contract:\n  want %s → %s\n  got  %s → %s",
+				id, sym, id, got[id])
+		}
+	}
+}
+
 func TestHTTPExtractor_SupportedLanguages(t *testing.T) {
 	ext := &HTTPExtractor{}
 	langs := ext.SupportedLanguages()
-	if len(langs) != 5 {
-		t.Errorf("expected 5 languages, got %d", len(langs))
+
+	// Spot-check the specific languages rather than the count so adding
+	// a new language's patterns (T2.1 added dart) doesn't force an
+	// unrelated test update.
+	want := []string{"go", "typescript", "javascript", "python", "java", "dart"}
+	set := make(map[string]bool, len(langs))
+	for _, l := range langs {
+		set[l] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			t.Errorf("SupportedLanguages missing %q; got %v", w, langs)
+		}
 	}
 }
 

@@ -222,6 +222,99 @@ func TestReconcileContractEdges_TemplateLiteralConsumer(t *testing.T) {
 		consumerSym, providerSym, nodeIDs(chain.Nodes))
 }
 
+// setupDartConsumerRepo writes a Flutter-shape api-client file with dio
+// calls to clean absolute paths and Dart's bare-$id interpolation for the
+// path param — the pattern tuck_app's TuckApiClient uses. T2.1 recognizes
+// these as consumer contracts; NormalizeHTTPPath collapses $id to {id}.
+func setupDartConsumerRepo(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "lib", "core"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pubspec.yaml"),
+		[]byte("name: "+name+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lib", "core", "api_client.dart"), []byte(
+		"class TuckApiClient {\n"+
+			"  final Dio _dio;\n"+
+			"  TuckApiClient(this._dio);\n"+
+			"\n"+
+			"  Future<void> fetchUsers() async {\n"+
+			"    await _dio.get('/api/users');\n"+
+			"  }\n"+
+			"}\n",
+	), 0o644))
+	return dir
+}
+
+// TestReconcileContractEdges_DartConsumer is the cross-language guard for
+// T2.1 — a Flutter app's dio-based API client bridges to the Go provider.
+// Without Dart patterns in the extractor the consumer would never produce
+// a contract, the matcher would never pair, and get_call_chain would stop
+// at TuckApiClient.fetchUsers instead of reaching the provider handler.
+func TestReconcileContractEdges_DartConsumer(t *testing.T) {
+	providerRoot := setupHTTPProviderRepo(t, "provider-svc")
+	consumerRoot := setupDartConsumerRepo(t, "mobile-app")
+
+	tmpCfg := filepath.Join(t.TempDir(), "config.yaml")
+	gc := &config.GlobalConfig{
+		Repos: []config.RepoEntry{
+			{Path: providerRoot, Name: "provider-svc"},
+			{Path: consumerRoot, Name: "mobile-app"},
+		},
+	}
+	gc.SetConfigPath(tmpCfg)
+	require.NoError(t, gc.Save())
+
+	cm, err := config.NewConfigManager(tmpCfg)
+	require.NoError(t, err)
+
+	g := graph.New()
+	mi := NewMultiIndexer(g, newMultiLangRegistry(), search.NewBM25(), cm, zap.NewNop())
+	for _, entry := range cm.Global().Repos {
+		_, err := mi.TrackRepoCtx(context.Background(), entry)
+		require.NoError(t, err, "track %s", entry.Name)
+	}
+
+	// The Dart extractor names methods by their short name, so the enclosing
+	// symbol of the dio.get call is TuckApiClient.fetchUsers — the method.
+	// The exact Dart symbol ID format depends on the Dart tree-sitter
+	// extractor, so accept any consumer ID in the mobile-app repo whose
+	// name ends in "fetchUsers".
+	providerSym := "provider-svc/main.go::listUsers"
+
+	var matchEdge *graph.Edge
+	for _, e := range g.AllEdges() {
+		if e.Kind != graph.EdgeMatches {
+			continue
+		}
+		if e.To != providerSym {
+			continue
+		}
+		n := g.GetNode(e.From)
+		if n != nil && n.Name == "fetchUsers" && n.RepoPrefix == "mobile-app" {
+			matchEdge = e
+			break
+		}
+	}
+	require.NotNil(t, matchEdge,
+		"expected EdgeMatches from Dart fetchUsers to %s; present match edges: %v",
+		providerSym, collectMatchEdges(g))
+	assert.True(t, matchEdge.CrossRepo,
+		"consumer (Dart) and provider (Go) live in different repos")
+
+	eng := query.NewEngine(g)
+	chain := eng.GetCallChain(matchEdge.From, query.QueryOptions{Depth: 4, Limit: 50, Detail: "brief"})
+	reached := false
+	for _, n := range chain.Nodes {
+		if n.ID == providerSym {
+			reached = true
+			break
+		}
+	}
+	assert.True(t, reached,
+		"get_call_chain(%s) must reach %s; chain was: %v",
+		matchEdge.From, providerSym, nodeIDs(chain.Nodes))
+}
+
 // TestReconcileContractEdges_PurgesStaleOnUntrack asserts that removing
 // the consumer repo deletes its match edges — otherwise the graph would
 // accumulate dangling edges pointing at symbols that no longer exist.

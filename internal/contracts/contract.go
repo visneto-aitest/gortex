@@ -52,10 +52,11 @@ var paramPatterns = regexp.MustCompile(`:(\w+)|<(\w+(?::\w+)?)>|\{(\w+)\}`)
 // contracts match providers' canonical "/v1/..." paths.
 var tplBasePrefix = regexp.MustCompile(`^/?\$\{[^}]+\}`)
 
-// tplInlineParam matches any remaining ${name} placeholders in path
-// segments (e.g. /users/${id}/tags). Those are path parameters and
-// become {name} so they match provider routes like /users/{id}/tags.
-var tplInlineParam = regexp.MustCompile(`\$\{([^}]+)\}`)
+// tplInlineParam matches any remaining inline placeholders in path
+// segments — both ${name} (JS/TS, and Dart's braced form) and $name
+// (Dart's bare form, e.g. /v1/tucks/$id). Both collapse to {name}
+// so consumer paths align with provider route declarations.
+var tplInlineParam = regexp.MustCompile(`\$\{([^}]+)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)`)
 
 // NormalizeHTTPPath converts path parameters from various frameworks into the
 // canonical {param} form.  Examples:
@@ -89,10 +90,17 @@ func NormalizeHTTPPath(path string) string {
 	// the path is the same shape as the provider's route declaration.
 	path = tplBasePrefix.ReplaceAllString(path, "")
 
-	// Any remaining ${name} placeholders are inline path parameters.
-	// Replace with {name} so they collapse to the canonical param form
-	// the regular parameter normaliser understands.
-	path = tplInlineParam.ReplaceAllString(path, "{$1}")
+	// Any remaining inline placeholders are path parameters. Both ${name}
+	// (group 1) and Dart-style $name (group 2) collapse to {name} so the
+	// canonical param normaliser below treats them uniformly.
+	path = tplInlineParam.ReplaceAllStringFunc(path, func(m string) string {
+		sub := tplInlineParam.FindStringSubmatch(m)
+		name := sub[1]
+		if name == "" {
+			name = sub[2]
+		}
+		return "{" + name + "}"
+	})
 
 	// Normalise parameter placeholders.
 	path = paramPatterns.ReplaceAllStringFunc(path, func(m string) string {
