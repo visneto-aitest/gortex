@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zzet/gortex/internal/bridge"
 	"github.com/zzet/gortex/internal/config"
 	"github.com/zzet/gortex/internal/daemon"
 	"github.com/zzet/gortex/internal/embedding"
@@ -28,69 +27,70 @@ import (
 	"github.com/zzet/gortex/internal/semantic/goanalysis"
 	"github.com/zzet/gortex/internal/semantic/lsp"
 	"github.com/zzet/gortex/internal/semantic/scip"
+	"github.com/zzet/gortex/internal/server"
 	"github.com/zzet/gortex/internal/web"
 	"github.com/zzet/gortex/internal/web/hub"
 )
 
 var (
-	serveIndex      string
-	serveTransport  string
-	servePort       int
-	serveWatch      bool
-	serveWeb        bool
-	serveBridge     bool
-	serveCORSOrigin string
-	serveDebounce   int
-	serveTrack      []string
-	serveProject    string
-	serveCacheDir      string
-	serveNoCache       bool
-	serveEmbeddings    bool
-	serveEmbeddingsURL string
-	serveEmbeddingsModel string
-	serveSemantic      bool
-	serveNoSemantic    bool
-	serveSemanticMode  string
-	serveNoDaemon      bool
-	serveForceProxy    bool
+	mcpIndex      string
+	mcpTransport  string
+	mcpPort       int
+	mcpWatch      bool
+	mcpWeb        bool
+	mcpServerAPI  bool
+	mcpCORSOrigin string
+	mcpDebounce   int
+	mcpTrack      []string
+	mcpProject    string
+	mcpCacheDir      string
+	mcpNoCache       bool
+	mcpEmbeddings    bool
+	mcpEmbeddingsURL string
+	mcpEmbeddingsModel string
+	mcpSemantic      bool
+	mcpNoSemantic    bool
+	mcpSemanticMode  string
+	mcpNoDaemon      bool
+	mcpForceProxy    bool
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the MCP server",
-	RunE:  runServe,
+var mcpCmd = &cobra.Command{
+	Use:   "mcp",
+	Short: "Start the MCP server (stdio transport)",
+	RunE:  runMCP,
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&serveIndex, "index", "", "repository path to index on startup")
-	serveCmd.Flags().StringVar(&serveTransport, "transport", "stdio", "transport: stdio")
-	serveCmd.Flags().IntVar(&servePort, "port", 8765, "port for HTTP transport")
-	serveCmd.Flags().BoolVar(&serveWatch, "watch", false, "keep graph in sync with filesystem changes")
-	serveCmd.Flags().BoolVar(&serveWeb, "web", false, "start web visualization UI")
-	serveCmd.Flags().IntVar(&serveDebounce, "debounce", 150, "debounce delay in ms")
-	serveCmd.Flags().BoolVar(&serveBridge, "bridge", false, "start HTTP bridge API alongside MCP stdio")
-	serveCmd.Flags().StringVar(&serveCORSOrigin, "cors-origin", "*", "allowed CORS origin for bridge API")
-	serveCmd.Flags().StringSliceVar(&serveTrack, "track", nil, "additional repository paths to track")
-	serveCmd.Flags().StringVar(&serveProject, "project", "", "active project name")
-	serveCmd.Flags().StringVar(&serveCacheDir, "cache-dir", "", "graph cache directory (default ~/.cache/gortex/)")
-	serveCmd.Flags().BoolVar(&serveNoCache, "no-cache", false, "disable graph caching")
-	serveCmd.Flags().BoolVar(&serveEmbeddings, "embeddings", false, "enable semantic search (built-in word vectors or transformer if compiled in)")
-	serveCmd.Flags().StringVar(&serveEmbeddingsURL, "embeddings-url", "", "embedding API URL (e.g. http://localhost:11434 for Ollama)")
-	serveCmd.Flags().StringVar(&serveEmbeddingsModel, "embeddings-model", "", "embedding model name (default: auto-detect)")
-	serveCmd.Flags().BoolVar(&serveSemantic, "semantic", false, "enable semantic enrichment (SCIP, go/types, LSP)")
-	serveCmd.Flags().BoolVar(&serveNoSemantic, "no-semantic", false, "disable semantic enrichment")
-	serveCmd.Flags().StringVar(&serveSemanticMode, "semantic-mode", "typecheck", "Go analysis mode: typecheck or callgraph")
-	serveCmd.Flags().BoolVar(&serveNoDaemon, "no-daemon", false, "force embedded server, do not connect to a running daemon")
-	serveCmd.Flags().BoolVar(&serveForceProxy, "proxy", false, "require a running daemon and proxy through it (error if unavailable)")
-	rootCmd.AddCommand(serveCmd)
+	mcpCmd.Flags().StringVar(&mcpIndex, "index", "", "repository path to index on startup")
+	mcpCmd.Flags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio")
+	mcpCmd.Flags().IntVar(&mcpPort, "port", 8765, "port for HTTP transport")
+	mcpCmd.Flags().BoolVar(&mcpWatch, "watch", false, "keep graph in sync with filesystem changes")
+	mcpCmd.Flags().BoolVar(&mcpWeb, "web", false, "start web visualization UI")
+	mcpCmd.Flags().IntVar(&mcpDebounce, "debounce", 150, "debounce delay in ms")
+	mcpCmd.Flags().BoolVar(&mcpServerAPI, "server", false, "start HTTP server API alongside MCP stdio")
+	mcpCmd.Flags().StringVar(&mcpCORSOrigin, "cors-origin", "*", "allowed CORS origin for server API")
+	mcpCmd.Flags().StringSliceVar(&mcpTrack, "track", nil, "additional repository paths to track")
+	mcpCmd.Flags().StringVar(&mcpProject, "project", "", "active project name")
+	mcpCmd.Flags().StringVar(&mcpCacheDir, "cache-dir", "", "graph cache directory (default ~/.cache/gortex/)")
+	mcpCmd.Flags().BoolVar(&mcpNoCache, "no-cache", false, "disable graph caching")
+	mcpCmd.Flags().BoolVar(&mcpEmbeddings, "embeddings", false, "enable semantic search (built-in word vectors or transformer if compiled in)")
+	mcpCmd.Flags().StringVar(&mcpEmbeddingsURL, "embeddings-url", "", "embedding API URL (e.g. http://localhost:11434 for Ollama)")
+	mcpCmd.Flags().StringVar(&mcpEmbeddingsModel, "embeddings-model", "", "embedding model name (default: auto-detect)")
+	mcpCmd.Flags().BoolVar(&mcpSemantic, "semantic", false, "enable semantic enrichment (SCIP, go/types, LSP)")
+	mcpCmd.Flags().BoolVar(&mcpNoSemantic, "no-semantic", false, "disable semantic enrichment")
+	mcpCmd.Flags().StringVar(&mcpSemanticMode, "semantic-mode", "typecheck", "Go analysis mode: typecheck or callgraph")
+	mcpCmd.Flags().BoolVar(&mcpNoDaemon, "no-daemon", false, "force embedded server, do not connect to a running daemon")
+	mcpCmd.Flags().BoolVar(&mcpForceProxy, "proxy", false, "require a running daemon and proxy through it (error if unavailable)")
+	rootCmd.AddCommand(mcpCmd)
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
+func runMCP(cmd *cobra.Command, args []string) error {
 	// Daemon-first: if stdio indicates an MCP client spawned us AND a
 	// daemon is listening, proxy through it instead of spinning up an
 	// embedded server. Terminal invocations fall through to embedded by
 	// default.
-	if shouldTryProxy(serveNoDaemon, serveForceProxy) {
+	if shouldTryProxy(mcpNoDaemon, mcpForceProxy) {
 		ran, proxyErr := runProxy(cmd.Context())
 		if proxyErr != nil {
 			return proxyErr
@@ -99,7 +99,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		// Daemon unavailable — fall through to embedded.
-		if serveForceProxy {
+		if mcpForceProxy {
 			return fmt.Errorf("--proxy was passed but no daemon is running (socket: %s)",
 				daemon.SocketPath())
 		}
@@ -124,10 +124,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// that, per-repo indexers created by MultiIndexer have embedder=nil
 	// and skip the vector pass.
 	var embedder embedding.Provider
-	if serveEmbeddingsURL != "" {
-		embedder = embedding.NewAPIProvider(serveEmbeddingsURL, serveEmbeddingsModel)
-		fmt.Fprintf(os.Stderr, "[gortex] semantic search enabled (API: %s)\n", serveEmbeddingsURL)
-	} else if serveEmbeddings {
+	if mcpEmbeddingsURL != "" {
+		embedder = embedding.NewAPIProvider(mcpEmbeddingsURL, mcpEmbeddingsModel)
+		fmt.Fprintf(os.Stderr, "[gortex] semantic search enabled (API: %s)\n", mcpEmbeddingsURL)
+	} else if mcpEmbeddings {
 		e, err := embedding.NewLocalProvider()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[gortex] warning: embeddings disabled: %v\n", err)
@@ -141,7 +141,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set up semantic enrichment.
-	if !serveNoSemantic && (serveSemantic || cfg.Semantic.Enabled) {
+	if !mcpNoSemantic && (mcpSemantic || cfg.Semantic.Enabled) {
 		semCfg := cfg.Semantic
 		semCfg.Enabled = true
 
@@ -171,7 +171,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		// Register go/types provider (always available for Go).
 		mode := goanalysis.ModeTypeCheck
-		if serveSemanticMode == "callgraph" {
+		if mcpSemanticMode == "callgraph" {
 			mode = goanalysis.ModeCallGraph
 		}
 		semMgr.RegisterProvider(goanalysis.NewProvider(mode, false, logger))
@@ -190,7 +190,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		idx.SetSemanticManager(semMgr)
-		fmt.Fprintf(os.Stderr, "[gortex] semantic enrichment enabled (mode: %s)\n", serveSemanticMode)
+		fmt.Fprintf(os.Stderr, "[gortex] semantic enrichment enabled (mode: %s)\n", mcpSemanticMode)
 	}
 
 	// Initialize ConfigManager for multi-repo support.
@@ -201,8 +201,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add --track repos to GlobalConfig.
-	if cm != nil && len(serveTrack) > 0 {
-		for _, trackPath := range serveTrack {
+	if cm != nil && len(mcpTrack) > 0 {
+		for _, trackPath := range mcpTrack {
 			absPath, err := filepath.Abs(trackPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[gortex] warning: could not resolve --track path %s: %v\n", trackPath, err)
@@ -216,7 +216,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine active project.
-	activeProject := serveProject
+	activeProject := mcpProject
 	if activeProject == "" && cm != nil {
 		activeProject = cm.Global().ActiveProject
 	}
@@ -256,17 +256,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize feedback persistence for cross-session context learning.
-	srv.InitFeedback(serveCacheDir, serveIndex)
+	srv.InitFeedback(mcpCacheDir, mcpIndex)
 
 	// Initialize cumulative token-savings persistence. Path defaults to
 	// ~/.cache/gortex/savings.json; the store operates in-memory when the
 	// cache dir is unavailable.
 	savingsPath := savings.DefaultPath()
-	if serveCacheDir != "" {
-		savingsPath = filepath.Join(serveCacheDir, "savings.json")
+	if mcpCacheDir != "" {
+		savingsPath = filepath.Join(mcpCacheDir, "savings.json")
 	}
 	if savingsStore, err := savings.Open(savingsPath); err == nil {
-		srv.InitSavings(savingsStore, serveIndex)
+		srv.InitSavings(savingsStore, mcpIndex)
 		stopSavingsFlush := srv.StartPeriodicSavingsFlush(5 * time.Minute)
 		defer stopSavingsFlush()
 		defer func() { _ = srv.FlushSavings() }()
@@ -274,18 +274,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "[gortex] savings persistence disabled: %v\n", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "[gortex] MCP server ready (transport: %s)\n", serveTransport)
+	fmt.Fprintf(os.Stderr, "[gortex] MCP server ready (transport: %s)\n", mcpTransport)
 
-	// Start bridge HTTP API if requested.
-	if serveBridge {
-		bridgeHandler := bridge.NewHandler(srv.MCPServer(), g, version, logger)
-		corsOpts := bridge.CORSOptions{AllowOrigins: []string{serveCORSOrigin}}
-		handler := bridge.WithCORS(bridgeHandler, corsOpts)
+	// Start server HTTP API if requested.
+	if mcpServerAPI {
+		serverHandler := server.NewHandler(srv.MCPServer(), g, version, logger)
+		corsOpts := server.CORSOptions{AllowOrigins: []string{mcpCORSOrigin}}
+		handler := server.WithCORS(serverHandler, corsOpts)
 		go func() {
-			bridgeAddr := fmt.Sprintf(":%d", servePort)
-			fmt.Fprintf(os.Stderr, "[gortex] bridge API at http://localhost:%d\n", servePort)
-			if err := http.ListenAndServe(bridgeAddr, handler); err != nil && err != http.ErrServerClosed {
-				fmt.Fprintf(os.Stderr, "[gortex] bridge server error: %v\n", err)
+			serverAddr := fmt.Sprintf(":%d", mcpPort)
+			fmt.Fprintf(os.Stderr, "[gortex] server API at http://localhost:%d\n", mcpPort)
+			if err := http.ListenAndServe(serverAddr, handler); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintf(os.Stderr, "[gortex] server API error: %v\n", err)
 			}
 		}()
 	}
@@ -298,11 +298,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create persistence store.
 	var store persistence.Store
-	if serveNoCache {
+	if mcpNoCache {
 		store = persistence.NopStore{}
 	} else {
 		var err error
-		store, err = persistence.NewFileStore(serveCacheDir, version)
+		store, err = persistence.NewFileStore(mcpCacheDir, version)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[gortex] warning: cache disabled: %v\n", err)
 			store = persistence.NopStore{}
@@ -311,12 +311,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Background: index, watch, analyze — graph populates while MCP is live.
 	go func() {
-		if serveIndex != "" {
-			commitHash := gitCommitHash(serveIndex)
+		if mcpIndex != "" {
+			commitHash := gitCommitHash(mcpIndex)
 			cached := false
 
-			if commitHash != "" && store.Check(serveIndex, commitHash) && store.Validate(serveIndex, commitHash) {
-				snap, err := store.Load(serveIndex, commitHash)
+			if commitHash != "" && store.Check(mcpIndex, commitHash) && store.Validate(mcpIndex, commitHash) {
+				snap, err := store.Load(mcpIndex, commitHash)
 				if err == nil {
 					for _, n := range snap.Nodes {
 						g.AddNode(n)
@@ -325,7 +325,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 						g.AddEdge(e)
 					}
 					idx.SetFileMtimes(snap.FileMtimes)
-					idx.SetRootPath(serveIndex)
+					idx.SetRootPath(mcpIndex)
 
 					// Restore vector index if available.
 					if len(snap.VectorIndex) > 0 && snap.VectorDims > 0 {
@@ -334,7 +334,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 						}
 					}
 
-					result, err := idx.IncrementalReindex(serveIndex)
+					result, err := idx.IncrementalReindex(mcpIndex)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "[gortex] incremental reindex failed: %v\n", err)
 					} else {
@@ -348,8 +348,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 
 			if !cached {
-				fmt.Fprintf(os.Stderr, "[gortex] indexing %s...\n", serveIndex)
-				result, err := idx.Index(serveIndex)
+				fmt.Fprintf(os.Stderr, "[gortex] indexing %s...\n", mcpIndex)
+				result, err := idx.Index(mcpIndex)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[gortex] indexing failed: %v\n", err)
 					return
@@ -370,11 +370,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		// Start watcher if requested.
-		if serveWatch {
+		if mcpWatch {
 			wcfg := cfg.Watch
 			wcfg.Enabled = true
-			if serveDebounce > 0 {
-				wcfg.DebounceMs = serveDebounce
+			if mcpDebounce > 0 {
+				wcfg.DebounceMs = mcpDebounce
 			}
 
 			watcher, err := indexer.NewWatcher(idx, wcfg, logger)
@@ -384,8 +384,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 
 			watchPaths := wcfg.Paths
-			if len(watchPaths) == 0 && serveIndex != "" {
-				watchPaths = []string{serveIndex}
+			if len(watchPaths) == 0 && mcpIndex != "" {
+				watchPaths = []string{mcpIndex}
 			}
 			if len(watchPaths) == 0 {
 				watchPaths = []string{"."}
@@ -405,22 +405,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "[gortex] watch mode active\n")
 
 			// Start web visualization server (only if --web flag is set).
-			if serveWeb {
+			if mcpWeb {
 				webSrv := web.NewServer(g, eng, eventHub, logger)
 				go func() {
-					webAddr := fmt.Sprintf(":%d", servePort)
-					fmt.Fprintf(os.Stderr, "[gortex] web UI at http://localhost:%d\n", servePort)
+					webAddr := fmt.Sprintf(":%d", mcpPort)
+					fmt.Fprintf(os.Stderr, "[gortex] web UI at http://localhost:%d\n", mcpPort)
 					if err := webSrv.Start(webAddr); err != nil && err != http.ErrServerClosed {
 						fmt.Fprintf(os.Stderr, "[gortex] web server error: %v\n", err)
 					}
 				}()
 			}
-		} else if serveWeb {
+		} else if mcpWeb {
 			// Web without watch — no event hub needed.
 			webSrv := web.NewServer(g, eng, nil, logger)
 			go func() {
-				webAddr := fmt.Sprintf(":%d", servePort)
-				fmt.Fprintf(os.Stderr, "[gortex] web UI at http://localhost:%d\n", servePort)
+				webAddr := fmt.Sprintf(":%d", mcpPort)
+				fmt.Fprintf(os.Stderr, "[gortex] web UI at http://localhost:%d\n", mcpPort)
 				if err := webSrv.Start(webAddr); err != nil && err != http.ErrServerClosed {
 					fmt.Fprintf(os.Stderr, "[gortex] web server error: %v\n", err)
 				}
@@ -442,12 +442,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\n[gortex] received %s, shutting down\n", sig)
 
 		// Persist graph snapshot on shutdown.
-		if serveIndex != "" {
-			commitHash := gitCommitHash(serveIndex)
+		if mcpIndex != "" {
+			commitHash := gitCommitHash(mcpIndex)
 			if commitHash != "" {
 				snap := &persistence.Snapshot{
 					Version:    version,
-					RepoPath:   serveIndex,
+					RepoPath:   mcpIndex,
 					CommitHash: commitHash,
 					IndexedAt:  time.Now(),
 					Nodes:      g.AllNodes(),

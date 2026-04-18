@@ -99,7 +99,7 @@ func (a *Adapter) Apply(env agents.Env, opts agents.ApplyOpts) (*agents.Result, 
 		// is optional — we set it for parity with other adapters.
 		servers["gortex"] = map[string]any{
 			"command": "gortex",
-			"args":    []string{"serve", "--index", ".", "--watch"},
+			"args":    []string{"mcp", "--index", ".", "--watch"},
 			"env":     map[string]string{"GORTEX_INDEX_WORKERS": "8"},
 		}
 		root["servers"] = servers

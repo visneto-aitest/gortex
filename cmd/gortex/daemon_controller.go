@@ -22,7 +22,7 @@ import (
 
 // realController is the production daemon.Controller implementation. It
 // wraps the MultiIndexer and ConfigManager so track/untrack/reload/status
-// operations go through the same code paths the current `gortex serve`
+// operations go through the same code paths the current `gortex mcp`
 // command uses.
 //
 // Methods are serialized via a mutex — track/reload can race with status

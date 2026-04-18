@@ -12,7 +12,7 @@ import (
 )
 
 // Client is one end of a daemon connection. Used by:
-//   - `gortex serve --proxy` — stdio MCP → daemon relay.
+//   - `gortex mcp --proxy` — stdio MCP → daemon relay.
 //   - `gortex daemon status / reload / track / untrack / stop` — control RPC.
 //
 // A Client is not safe for concurrent use — each caller owns its own.

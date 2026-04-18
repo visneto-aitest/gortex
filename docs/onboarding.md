@@ -39,7 +39,7 @@ cd ~/projects/myapp
 gortex init
 ```
 
-With `--start`, the daemon is already running and Claude Code will find Gortex on its next run. If you skipped `--start`, you can either spawn the daemon (`gortex daemon start --detach`) or run a per-repo server (`gortex serve --index . --watch`).
+With `--start`, the daemon is already running and Claude Code will find Gortex on its next run. If you skipped `--start`, you can either spawn the daemon (`gortex daemon start --detach`) or run a per-repo server (`gortex mcp --index . --watch`).
 
 Open your AI assistant in that repo and ask it to do something real. It'll use Gortex tools automatically. If that worked, the rest of this document is optional detail.
 
@@ -88,20 +88,20 @@ Two ways — pick whichever fits your workflow.
 **Option A — you start it and leave it running.** Useful when multiple AI tools point at the same graph, or when you want the web UI:
 
 ```bash
-gortex serve --index . --watch
+gortex mcp --index . --watch
 ```
 
 `--watch` re-indexes changed files live via fsnotify. `--cache-dir ~/.cache/gortex` (default) saves snapshots between restarts so subsequent starts are ~200ms instead of 3-5s.
 
-To also get the web UI + HTTP bridge:
+To also get the web UI + HTTP server API:
 
 ```bash
-gortex bridge --index . --web --watch
+gortex server --index . --web --watch
 ```
 
 Open `http://localhost:4747` for the force-directed graph explorer.
 
-**Option B — your IDE starts it automatically.** The `.mcp.json` that `gortex init` created tells the IDE how to spawn `gortex serve`. You don't run anything yourself. Claude Code, Cursor, and VS Code all work this way. Downside: each tool gets its own server process (memory cost scales with number of tools).
+**Option B — your IDE starts it automatically.** The `.mcp.json` that `gortex init` created tells the IDE how to spawn `gortex mcp`. You don't run anything yourself. Claude Code, Cursor, and VS Code all work this way. Downside: each tool gets its own server process (memory cost scales with number of tools).
 
 If you're unsure, start with Option A. You can always remove the `.mcp.json` → switch to Option B later.
 
@@ -128,7 +128,7 @@ Open your AI assistant in the repo. Ask it something concrete that requires unde
 gortex status --index .
 ```
 
-Prints node/edge counts, language breakdown, and per-repo stats. If this shows 0 nodes, the index didn't build — check for errors in `gortex serve` output.
+Prints node/edge counts, language breakdown, and per-repo stats. If this shows 0 nodes, the index didn't build — check for errors in `gortex mcp` output.
 
 ### 5. Your first calls (if you're driving Gortex directly)
 
@@ -163,7 +163,7 @@ Check that `gortex` is on your `PATH` (`which gortex` should resolve). If you in
 The hooks didn't install. Re-run `gortex init --hooks-only` and restart the AI tool. On Claude Code, also check that `.claude/settings.local.json` exists and contains `"gortex hook"` invocations under `hooks`.
 
 **`graph_stats` returns `total_nodes: 0`.**
-The index is empty. Either `gortex serve` isn't watching the right directory, or `.gortex.yaml` excludes everything. Run `gortex status --index /absolute/path/to/repo` to verify the paths.
+The index is empty. Either `gortex mcp` isn't watching the right directory, or `.gortex.yaml` excludes everything. Run `gortex status --index /absolute/path/to/repo` to verify the paths.
 
 **Indexing a big repo takes forever.**
 First-time index of a 100k-symbol repo is ~20-30 seconds. On restart, it's ~200ms because the snapshot gets restored and only changed files re-index. Make sure `--cache-dir` isn't being deleted between runs.
@@ -184,7 +184,7 @@ Once the basics are working:
 - **Token savings + cost tracking** — `gortex savings` prints cumulative tokens saved + dollars avoided per model across all sessions. Accumulates automatically; no setup.
 - **Compact wire format (GCX1)** — every list-shaped tool accepts `format: "gcx"` for a round-trippable compact response. Median **−27.4% tokens** vs JSON on the benchmark, 100% round-trip integrity. Spec: [docs/wire-format.md](wire-format.md). TypeScript decoder on npm: [`@gortex/wire`](https://www.npmjs.com/package/@gortex/wire). Agents pick it up automatically — the PreToolUse and subagent hooks surface the opt-in. Applies to: `search_symbols`, `find_usages`, `analyze`, `contracts`, `batch_symbols`, `get_callers` / `get_call_chain` / `get_dependencies` / `get_dependents` / `find_implementations`, `get_file_summary`, `get_editing_context`, `smart_context`.
 - **Feedback loop** — after a successful task, call the `feedback` MCP tool with `action: "record"`. Future `smart_context` results rerank based on what was actually useful.
-- **Custom bridge integration** — `gortex bridge --index . --cors-origin '*'` exposes every MCP tool as HTTP. Good for editor plugins, CI hooks, custom dashboards.
+- **Custom HTTP integration** — `gortex server --index . --cors-origin '*'` exposes every MCP tool as HTTP. Good for editor plugins, CI hooks, custom dashboards.
 
 ## Daemon Mode
 
@@ -237,7 +237,7 @@ On macOS the unit lands at `~/Library/LaunchAgents/com.zzet.gortex.plist`; on Li
 
 ### How it works
 
-- `gortex serve` (what Claude Code spawns via `.mcp.json`) auto-detects the daemon. If reachable, it acts as a thin stdio ↔ socket proxy (~5 MB per client). If not, it falls back to the embedded server — global mode is never "required."
+- `gortex mcp` (what Claude Code spawns via `.mcp.json`) auto-detects the daemon. If reachable, it acts as a thin stdio ↔ socket proxy (~5 MB per client). If not, it falls back to the embedded server — global mode is never "required."
 - Every tracked repo gets its own fsnotify watcher so edits on disk flow into the graph live; no manual reload needed. `gortex track` attaches a watcher as part of the track operation; `gortex untrack` detaches it before evicting nodes.
 - Graph state is snapshotted to `~/.cache/gortex/daemon.gob.gz` on shutdown and every 10 minutes. Daemon restarts load it back and re-index only changed files.
 - Opening Claude Code in an untracked directory returns a structured `repo_not_tracked` error on every tool call. The agent surfaces it; you run `gortex track .` to include it.
@@ -247,7 +247,7 @@ On macOS the unit lands at `~/Library/LaunchAgents/com.zzet.gortex.plist`; on Li
 
 | Invocation | Daemon running | Daemon not running |
 |---|---|---|
-| Claude Code spawns `gortex serve` | Proxies through daemon | Embedded server (current behavior) |
+| Claude Code spawns `gortex mcp` | Proxies through daemon | Embedded server (current behavior) |
 | `gortex track /path` | Immediate re-index + watcher attached via daemon | Writes config; takes effect on next daemon/server start |
 | `gortex untrack /path` | Immediate graph eviction + watcher detached | Removes from config |
 | `gortex status` | Aggregate across tracked repos | One-shot local index |

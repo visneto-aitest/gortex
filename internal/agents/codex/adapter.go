@@ -5,7 +5,7 @@
 //
 //	[mcp_servers.gortex]
 //	command = "gortex"
-//	args = ["serve", "--index", ".", "--watch"]
+//	args = ["mcp", "--index", ".", "--watch"]
 //	[mcp_servers.gortex.env]
 //	GORTEX_INDEX_WORKERS = "8"
 //
@@ -87,7 +87,7 @@ func (a *Adapter) Apply(env agents.Env, opts agents.ApplyOpts) (*agents.Result, 
 		}
 		servers["gortex"] = map[string]any{
 			"command": "gortex",
-			"args":    []string{"serve", "--index", ".", "--watch"},
+			"args":    []string{"mcp", "--index", ".", "--watch"},
 			"env": map[string]any{
 				"GORTEX_INDEX_WORKERS": "8",
 			},

@@ -108,7 +108,7 @@ The primary integration, split across the two commands.
 
 **`gortex install` (user-level, once per machine)** writes:
 
-- `~/.claude.json` — MCP stanza pointing at `gortex serve`
+- `~/.claude.json` — MCP stanza pointing at `gortex mcp`
 - `~/.claude/settings.local.json` — user-level Claude Code hooks
   (unless `--no-hooks`)
 - `~/.claude/skills/gortex-*/SKILL.md` — curated tool-usage skills

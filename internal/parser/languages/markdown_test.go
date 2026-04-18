@@ -63,7 +63,7 @@ External link [Google](https://google.com) should be skipped.
 }
 
 func TestMarkdownExtractor_CodeBlocks(t *testing.T) {
-	src := []byte("# Example\n\n```bash\ngortex serve\n```\n\n```go\nfunc main() {}\n```\n")
+	src := []byte("# Example\n\n```bash\ngortex mcp\n```\n\n```go\nfunc main() {}\n```\n")
 	e := NewMarkdownExtractor()
 	result, err := e.Extract("README.md", src)
 	require.NoError(t, err)

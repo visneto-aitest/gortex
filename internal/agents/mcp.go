@@ -35,7 +35,7 @@ func UpsertMCPServer(root map[string]any, serverName string, entry map[string]an
 func DefaultGortexMCPEntry() map[string]any {
 	return map[string]any{
 		"command": "gortex",
-		"args":    []string{"serve", "--index", ".", "--watch"},
+		"args":    []string{"mcp", "--index", ".", "--watch"},
 		"env":     map[string]string{"GORTEX_INDEX_WORKERS": "8"},
 	}
 }

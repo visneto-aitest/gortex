@@ -104,7 +104,7 @@ func emitSavingsText(snap savings.File, path string) {
 
 	if snap.Totals.CallsCounted == 0 {
 		fmt.Println("No source-reading tool calls recorded yet.")
-		fmt.Println("Run `gortex serve` and use get_symbol_source / batch_symbols / smart_context.")
+		fmt.Println("Run `gortex mcp` and use get_symbol_source / batch_symbols / smart_context.")
 		return
 	}
 

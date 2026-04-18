@@ -1,7 +1,7 @@
-// Package bridge exposes Gortex MCP tools over HTTP/JSON.
+// Package server exposes Gortex MCP tools over HTTP/JSON.
 // It provides the general-purpose HTTP handler used by both the standalone
-// bridge command and the eval server.
-package bridge
+// server command and the eval server.
+package server
 
 import (
 	"context"

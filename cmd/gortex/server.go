@@ -13,7 +13,6 @@ import (
 
 	"strings"
 
-	"github.com/zzet/gortex/internal/bridge"
 	"github.com/zzet/gortex/internal/config"
 	"github.com/zzet/gortex/internal/embedding"
 	"github.com/zzet/gortex/internal/persistence"
@@ -27,55 +26,56 @@ import (
 	"github.com/zzet/gortex/internal/semantic/goanalysis"
 	"github.com/zzet/gortex/internal/semantic/lsp"
 	"github.com/zzet/gortex/internal/semantic/scip"
+	"github.com/zzet/gortex/internal/server"
 	"github.com/zzet/gortex/internal/web"
 	"github.com/zzet/gortex/internal/web/hub"
 )
 
 var (
-	bridgePort       int
-	bridgeIndex      string
-	bridgeCORSOrigin string
-	bridgeWeb        bool
-	bridgeWatch      bool
-	bridgeTrack      []string
-	bridgeProject    string
-	bridgeCacheDir        string
-	bridgeNoCache         bool
-	bridgeEmbeddings      bool
-	bridgeEmbeddingsURL   string
-	bridgeEmbeddingsModel string
-	bridgeSemantic        bool
-	bridgeNoSemantic      bool
-	bridgeSemanticMode    string
+	serverPort       int
+	serverIndex      string
+	serverCORSOrigin string
+	serverWeb        bool
+	serverWatch      bool
+	serverTrack      []string
+	serverProject    string
+	serverCacheDir        string
+	serverNoCache         bool
+	serverEmbeddings      bool
+	serverEmbeddingsURL   string
+	serverEmbeddingsModel string
+	serverSemantic        bool
+	serverNoSemantic      bool
+	serverSemanticMode    string
 )
 
-var bridgeCmd = &cobra.Command{
-	Use:   "bridge",
-	Short: "Start the HTTP bridge API for external integrations",
+var serverCmd = &cobra.Command{
+	Use:   "server",
+	Short: "Start the HTTP server API for external integrations",
 	Long:  "Exposes Gortex MCP tools as an HTTP/JSON API. Endpoints: /health, /tools, /tool/{name}, /stats. Optionally serves the web UI on the same port.",
-	RunE:  runBridge,
+	RunE:  runServer,
 }
 
 func init() {
-	bridgeCmd.Flags().IntVar(&bridgePort, "port", 4747, "HTTP port to listen on")
-	bridgeCmd.Flags().StringVar(&bridgeIndex, "index", "", "repository path to index on startup")
-	bridgeCmd.Flags().StringVar(&bridgeCORSOrigin, "cors-origin", "*", "allowed CORS origin (use '*' for any)")
-	bridgeCmd.Flags().BoolVar(&bridgeWeb, "web", false, "serve web visualization UI on the same port")
-	bridgeCmd.Flags().BoolVar(&bridgeWatch, "watch", false, "keep graph in sync with filesystem changes")
-	bridgeCmd.Flags().StringSliceVar(&bridgeTrack, "track", nil, "additional repository paths to track")
-	bridgeCmd.Flags().StringVar(&bridgeProject, "project", "", "active project name")
-	bridgeCmd.Flags().StringVar(&bridgeCacheDir, "cache-dir", "", "graph cache directory (default ~/.cache/gortex/)")
-	bridgeCmd.Flags().BoolVar(&bridgeNoCache, "no-cache", false, "disable graph caching")
-	bridgeCmd.Flags().BoolVar(&bridgeEmbeddings, "embeddings", false, "enable semantic search")
-	bridgeCmd.Flags().StringVar(&bridgeEmbeddingsURL, "embeddings-url", "", "embedding API URL (e.g. http://localhost:11434 for Ollama)")
-	bridgeCmd.Flags().StringVar(&bridgeEmbeddingsModel, "embeddings-model", "", "embedding model name")
-	bridgeCmd.Flags().BoolVar(&bridgeSemantic, "semantic", false, "enable semantic enrichment (SCIP, go/types, LSP)")
-	bridgeCmd.Flags().BoolVar(&bridgeNoSemantic, "no-semantic", false, "disable semantic enrichment")
-	bridgeCmd.Flags().StringVar(&bridgeSemanticMode, "semantic-mode", "typecheck", "Go analysis mode: typecheck or callgraph")
-	rootCmd.AddCommand(bridgeCmd)
+	serverCmd.Flags().IntVar(&serverPort, "port", 4747, "HTTP port to listen on")
+	serverCmd.Flags().StringVar(&serverIndex, "index", "", "repository path to index on startup")
+	serverCmd.Flags().StringVar(&serverCORSOrigin, "cors-origin", "*", "allowed CORS origin (use '*' for any)")
+	serverCmd.Flags().BoolVar(&serverWeb, "web", false, "serve web visualization UI on the same port")
+	serverCmd.Flags().BoolVar(&serverWatch, "watch", false, "keep graph in sync with filesystem changes")
+	serverCmd.Flags().StringSliceVar(&serverTrack, "track", nil, "additional repository paths to track")
+	serverCmd.Flags().StringVar(&serverProject, "project", "", "active project name")
+	serverCmd.Flags().StringVar(&serverCacheDir, "cache-dir", "", "graph cache directory (default ~/.cache/gortex/)")
+	serverCmd.Flags().BoolVar(&serverNoCache, "no-cache", false, "disable graph caching")
+	serverCmd.Flags().BoolVar(&serverEmbeddings, "embeddings", false, "enable semantic search")
+	serverCmd.Flags().StringVar(&serverEmbeddingsURL, "embeddings-url", "", "embedding API URL (e.g. http://localhost:11434 for Ollama)")
+	serverCmd.Flags().StringVar(&serverEmbeddingsModel, "embeddings-model", "", "embedding model name")
+	serverCmd.Flags().BoolVar(&serverSemantic, "semantic", false, "enable semantic enrichment (SCIP, go/types, LSP)")
+	serverCmd.Flags().BoolVar(&serverNoSemantic, "no-semantic", false, "disable semantic enrichment")
+	serverCmd.Flags().StringVar(&serverSemanticMode, "semantic-mode", "typecheck", "Go analysis mode: typecheck or callgraph")
+	rootCmd.AddCommand(serverCmd)
 }
 
-func runBridge(_ *cobra.Command, _ []string) error {
+func runServer(_ *cobra.Command, _ []string) error {
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()
 
@@ -94,16 +94,16 @@ func runBridge(_ *cobra.Command, _ []string) error {
 	// can be handed off to MultiIndexer below; otherwise per-repo
 	// indexers built inside TrackRepoCtx have embedder=nil.
 	var embedder embedding.Provider
-	if bridgeEmbeddingsURL != "" {
-		embedder = embedding.NewAPIProvider(bridgeEmbeddingsURL, bridgeEmbeddingsModel)
-		fmt.Fprintf(os.Stderr, "[gortex] bridge: semantic search enabled (API: %s)\n", bridgeEmbeddingsURL)
-	} else if bridgeEmbeddings {
+	if serverEmbeddingsURL != "" {
+		embedder = embedding.NewAPIProvider(serverEmbeddingsURL, serverEmbeddingsModel)
+		fmt.Fprintf(os.Stderr, "[gortex] server: semantic search enabled (API: %s)\n", serverEmbeddingsURL)
+	} else if serverEmbeddings {
 		e, err := embedding.NewLocalProvider()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[gortex] bridge: embeddings disabled: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[gortex] server: embeddings disabled: %v\n", err)
 		} else {
 			embedder = e
-			fmt.Fprintf(os.Stderr, "[gortex] bridge: semantic search enabled (local)\n")
+			fmt.Fprintf(os.Stderr, "[gortex] server: semantic search enabled (local)\n")
 		}
 	}
 	if embedder != nil {
@@ -111,7 +111,7 @@ func runBridge(_ *cobra.Command, _ []string) error {
 	}
 
 	// Set up semantic enrichment.
-	if !bridgeNoSemantic && (bridgeSemantic || cfg.Semantic.Enabled) {
+	if !serverNoSemantic && (serverSemantic || cfg.Semantic.Enabled) {
 		semCfg := cfg.Semantic
 		semCfg.Enabled = true
 
@@ -139,7 +139,7 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		semMgr := semantic.NewManager(semInternalCfg, logger)
 
 		mode := goanalysis.ModeTypeCheck
-		if bridgeSemanticMode == "callgraph" {
+		if serverSemanticMode == "callgraph" {
 			mode = goanalysis.ModeCallGraph
 		}
 		semMgr.RegisterProvider(goanalysis.NewProvider(mode, false, logger))
@@ -157,7 +157,7 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		}
 
 		idx.SetSemanticManager(semMgr)
-		fmt.Fprintf(os.Stderr, "[gortex] bridge: semantic enrichment enabled (mode: %s)\n", bridgeSemanticMode)
+		fmt.Fprintf(os.Stderr, "[gortex] server: semantic enrichment enabled (mode: %s)\n", serverSemanticMode)
 	}
 
 	// Multi-repo support.
@@ -166,8 +166,8 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "[gortex] warning: could not load global config: %v\n", err)
 	}
 
-	if cm != nil && len(bridgeTrack) > 0 {
-		for _, trackPath := range bridgeTrack {
+	if cm != nil && len(serverTrack) > 0 {
+		for _, trackPath := range serverTrack {
 			absPath, err := filepath.Abs(trackPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[gortex] warning: could not resolve --track path %s: %v\n", trackPath, err)
@@ -179,7 +179,7 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	activeProject := bridgeProject
+	activeProject := serverProject
 	if activeProject == "" && cm != nil {
 		activeProject = cm.Global().ActiveProject
 	}
@@ -215,55 +215,55 @@ func runBridge(_ *cobra.Command, _ []string) error {
 
 	// Create persistence store.
 	var store persistence.Store
-	if bridgeNoCache {
+	if serverNoCache {
 		store = persistence.NopStore{}
 	} else {
 		var err error
-		store, err = persistence.NewFileStore(bridgeCacheDir, version)
+		store, err = persistence.NewFileStore(serverCacheDir, version)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[gortex] bridge: cache disabled: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[gortex] server: cache disabled: %v\n", err)
 			store = persistence.NopStore{}
 		}
 	}
 
 	// Build the HTTP handler — start serving immediately, index in background.
-	bridgeHandler := bridge.NewHandler(srv.MCPServer(), g, version, logger)
+	serverHandler := server.NewHandler(srv.MCPServer(), g, version, logger)
 
 	var handler http.Handler
-	if bridgeWeb {
-		// Compose bridge API + web UI on the same port.
+	if serverWeb {
+		// Compose server API + web UI on the same port.
 		topMux := http.NewServeMux()
 
-		// Bridge API routes.
-		topMux.Handle("/health", bridgeHandler)
-		topMux.Handle("/tools", bridgeHandler)
-		topMux.Handle("/tool/", bridgeHandler)
-		topMux.Handle("/stats", bridgeHandler)
+		// Server API routes.
+		topMux.Handle("/health", serverHandler)
+		topMux.Handle("/tools", serverHandler)
+		topMux.Handle("/tool/", serverHandler)
+		topMux.Handle("/stats", serverHandler)
 
 		// Web UI.
 		var eventHub *hub.Hub
-		if bridgeWatch {
+		if serverWatch {
 			wcfg := cfg.Watch
 			wcfg.Enabled = true
 			watcher, err := indexer.NewWatcher(idx, wcfg, logger)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "[gortex] bridge: watcher setup failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[gortex] server: watcher setup failed: %v\n", err)
 			} else {
 				watchPaths := wcfg.Paths
-				if len(watchPaths) == 0 && bridgeIndex != "" {
-					watchPaths = []string{bridgeIndex}
+				if len(watchPaths) == 0 && serverIndex != "" {
+					watchPaths = []string{serverIndex}
 				}
 				if len(watchPaths) == 0 {
 					watchPaths = []string{"."}
 				}
 				if err := watcher.Start(watchPaths); err != nil {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: watcher start failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[gortex] server: watcher start failed: %v\n", err)
 				} else {
 					srv.SetWatcher(watcher)
 					eventHub = hub.New()
 					go eventHub.Run(watcher.Events())
 					srv.WatchForReanalysis(eventHub, 500)
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: watch mode active\n")
+					fmt.Fprintf(os.Stderr, "[gortex] server: watch mode active\n")
 				}
 			}
 		}
@@ -272,49 +272,49 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		topMux.Handle("/", webSrv.Handler())
 
 		handler = topMux
-		fmt.Fprintf(os.Stderr, "[gortex] bridge: web UI enabled\n")
+		fmt.Fprintf(os.Stderr, "[gortex] server: web UI enabled\n")
 	} else {
-		handler = bridgeHandler
+		handler = serverHandler
 
 		// Watch mode without web UI.
-		if bridgeWatch {
+		if serverWatch {
 			wcfg := cfg.Watch
 			wcfg.Enabled = true
 			watcher, err := indexer.NewWatcher(idx, wcfg, logger)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "[gortex] bridge: watcher setup failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[gortex] server: watcher setup failed: %v\n", err)
 			} else {
 				watchPaths := wcfg.Paths
-				if len(watchPaths) == 0 && bridgeIndex != "" {
-					watchPaths = []string{bridgeIndex}
+				if len(watchPaths) == 0 && serverIndex != "" {
+					watchPaths = []string{serverIndex}
 				}
 				if len(watchPaths) == 0 {
 					watchPaths = []string{"."}
 				}
 				if err := watcher.Start(watchPaths); err != nil {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: watcher start failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[gortex] server: watcher start failed: %v\n", err)
 				} else {
 					srv.SetWatcher(watcher)
 					eventHub := hub.New()
 					go eventHub.Run(watcher.Events())
 					srv.WatchForReanalysis(eventHub, 500)
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: watch mode active\n")
+					fmt.Fprintf(os.Stderr, "[gortex] server: watch mode active\n")
 				}
 			}
 		}
 	}
 
 	// Wrap with CORS.
-	corsOpts := bridge.CORSOptions{AllowOrigins: []string{bridgeCORSOrigin}}
-	handler = bridge.WithCORS(handler, corsOpts)
+	corsOpts := server.CORSOptions{AllowOrigins: []string{serverCORSOrigin}}
+	handler = server.WithCORS(handler, corsOpts)
 
-	addr := fmt.Sprintf(":%d", bridgePort)
+	addr := fmt.Sprintf(":%d", serverPort)
 	httpServer := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 	}
 
-	fmt.Fprintf(os.Stderr, "[gortex] bridge listening on http://localhost:%d\n", bridgePort)
+	fmt.Fprintf(os.Stderr, "[gortex] server listening on http://localhost:%d\n", serverPort)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -328,16 +328,16 @@ func runBridge(_ *cobra.Command, _ []string) error {
 		// When MultiIndexer is available (global config has repos), use it exclusively.
 		// Single --index flag is only used when no multi-repo config exists.
 		if mi != nil {
-			fmt.Fprintf(os.Stderr, "[gortex] bridge: multi-repo indexing...\n")
+			fmt.Fprintf(os.Stderr, "[gortex] server: multi-repo indexing...\n")
 			if _, err := mi.IndexAll(); err != nil {
-				fmt.Fprintf(os.Stderr, "[gortex] bridge: multi-repo indexing error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[gortex] server: multi-repo indexing error: %v\n", err)
 			}
-		} else if bridgeIndex != "" {
-			commitHash := gitCommitHash(bridgeIndex)
+		} else if serverIndex != "" {
+			commitHash := gitCommitHash(serverIndex)
 			cached := false
 
-			if commitHash != "" && store.Check(bridgeIndex, commitHash) && store.Validate(bridgeIndex, commitHash) {
-				snap, err := store.Load(bridgeIndex, commitHash)
+			if commitHash != "" && store.Check(serverIndex, commitHash) && store.Validate(serverIndex, commitHash) {
+				snap, err := store.Load(serverIndex, commitHash)
 				if err == nil {
 					for _, n := range snap.Nodes {
 						g.AddNode(n)
@@ -346,35 +346,35 @@ func runBridge(_ *cobra.Command, _ []string) error {
 						g.AddEdge(e)
 					}
 					idx.SetFileMtimes(snap.FileMtimes)
-					idx.SetRootPath(bridgeIndex)
+					idx.SetRootPath(serverIndex)
 
 					if len(snap.VectorIndex) > 0 && snap.VectorDims > 0 {
 						if err := idx.ImportVectorIndex(snap.VectorIndex, snap.VectorDims, snap.VectorCount); err != nil {
-							fmt.Fprintf(os.Stderr, "[gortex] bridge: vector index restore failed: %v\n", err)
+							fmt.Fprintf(os.Stderr, "[gortex] server: vector index restore failed: %v\n", err)
 						}
 					}
 
-					result, err := idx.IncrementalReindex(bridgeIndex)
+					result, err := idx.IncrementalReindex(serverIndex)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "[gortex] bridge: incremental reindex failed: %v\n", err)
+						fmt.Fprintf(os.Stderr, "[gortex] server: incremental reindex failed: %v\n", err)
 					} else {
-						fmt.Fprintf(os.Stderr, "[gortex] bridge: restored graph (%d nodes, %d edges), re-indexed %d stale files in %dms\n",
+						fmt.Fprintf(os.Stderr, "[gortex] server: restored graph (%d nodes, %d edges), re-indexed %d stale files in %dms\n",
 							result.NodeCount, result.EdgeCount, result.FileCount, result.DurationMs)
 					}
 					cached = true
 				} else {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: cache load failed, will re-index: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[gortex] server: cache load failed, will re-index: %v\n", err)
 				}
 			}
 
 			if !cached {
-				fmt.Fprintf(os.Stderr, "[gortex] bridge: indexing %s...\n", bridgeIndex)
-				result, err := idx.Index(bridgeIndex)
+				fmt.Fprintf(os.Stderr, "[gortex] server: indexing %s...\n", serverIndex)
+				result, err := idx.Index(serverIndex)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: indexing failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[gortex] server: indexing failed: %v\n", err)
 					return
 				}
-				fmt.Fprintf(os.Stderr, "[gortex] bridge: indexed %d files (%d nodes, %d edges) in %dms\n",
+				fmt.Fprintf(os.Stderr, "[gortex] server: indexed %d files (%d nodes, %d edges) in %dms\n",
 					result.FileCount, result.NodeCount, result.EdgeCount, result.DurationMs)
 			}
 		}
@@ -396,16 +396,16 @@ func runBridge(_ *cobra.Command, _ []string) error {
 
 	select {
 	case err := <-errCh:
-		return fmt.Errorf("bridge: %w", err)
+		return fmt.Errorf("server: %w", err)
 	case sig := <-sigCh:
-		fmt.Fprintf(os.Stderr, "\n[gortex] bridge: received %s, shutting down\n", sig)
+		fmt.Fprintf(os.Stderr, "\n[gortex] server: received %s, shutting down\n", sig)
 
-		if bridgeIndex != "" {
-			commitHash := gitCommitHash(bridgeIndex)
+		if serverIndex != "" {
+			commitHash := gitCommitHash(serverIndex)
 			if commitHash != "" {
 				snap := &persistence.Snapshot{
 					Version:    version,
-					RepoPath:   bridgeIndex,
+					RepoPath:   serverIndex,
 					CommitHash: commitHash,
 					IndexedAt:  time.Now(),
 					Nodes:      g.AllNodes(),
@@ -414,9 +414,9 @@ func runBridge(_ *cobra.Command, _ []string) error {
 				}
 				snap.VectorIndex, snap.VectorDims, snap.VectorCount = idx.ExportVectorIndex()
 				if err := store.Save(snap); err != nil {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: cache save failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[gortex] server: cache save failed: %v\n", err)
 				} else {
-					fmt.Fprintf(os.Stderr, "[gortex] bridge: saved graph snapshot (%d nodes, %d edges)\n",
+					fmt.Fprintf(os.Stderr, "[gortex] server: saved graph snapshot (%d nodes, %d edges)\n",
 						len(snap.Nodes), len(snap.Edges))
 				}
 			}

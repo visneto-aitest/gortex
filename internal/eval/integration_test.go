@@ -14,7 +14,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zzet/gortex/internal/bridge"
+	"github.com/zzet/gortex/internal/server"
 	"github.com/zzet/gortex/internal/graph"
 	"go.uber.org/zap"
 )
@@ -81,7 +81,7 @@ func TestEvalServerLifecycle(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 
-		var health bridge.HealthResponse
+		var health server.HealthResponse
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&health))
 
 		assert.Equal(t, "ok", health.Status)
@@ -105,7 +105,7 @@ func TestEvalServerLifecycle(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var toolResp bridge.ToolResponse
+		var toolResp server.ToolResponse
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&toolResp))
 
 		assert.False(t, toolResp.IsError)
@@ -122,7 +122,7 @@ func TestEvalServerLifecycle(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var stats bridge.StatsResponse
+		var stats server.StatsResponse
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&stats))
 
 		assert.Equal(t, 2, stats.TotalNodes)

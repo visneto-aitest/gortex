@@ -12,7 +12,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zzet/gortex/internal/bridge"
+	"github.com/zzet/gortex/internal/server"
 	"github.com/zzet/gortex/internal/graph"
 	"go.uber.org/zap"
 )
@@ -61,7 +61,7 @@ func TestHealthEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 
-	var resp bridge.HealthResponse
+	var resp server.HealthResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, "ok", resp.Status)
 	assert.True(t, resp.Indexed)
@@ -79,7 +79,7 @@ func TestStatsEndpoint(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var resp bridge.StatsResponse
+	var resp server.StatsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, 2, resp.TotalNodes)
 	assert.Equal(t, 0, resp.TotalEdges)
@@ -97,7 +97,7 @@ func TestToolCallValid(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var resp bridge.ToolResponse
+	var resp server.ToolResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.False(t, resp.IsError)
 	require.Len(t, resp.Content, 1)

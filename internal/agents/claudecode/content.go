@@ -29,7 +29,7 @@ const ProjectMCPJSON = `{
     "gortex": {
       "command": "gortex",
       "args": [
-        "serve",
+        "mcp",
         "--index", ".",
         "--watch",
         "--web"

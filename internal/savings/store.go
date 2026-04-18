@@ -6,7 +6,7 @@
 // Storage format: a single JSON file at ~/.cache/gortex/savings.json (or the
 // configured cache dir). Atomic writes via temp-file + rename, with an
 // advisory file lock on a sidecar `.lock` file so multiple gortex processes
-// (e.g. a daemon and a parallel `gortex serve`) can write to the same
+// (e.g. a daemon and a parallel `gortex mcp`) can write to the same
 // savings file without clobbering each other's deltas. Falls back to an
 // in-memory-only store when the path isn't writable.
 package savings

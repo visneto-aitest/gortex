@@ -174,7 +174,7 @@ func (a *Adapter) Apply(env agents.Env, opts agents.ApplyOpts) (*agents.Result, 
 
 // applyGlobal handles Mode=ModeGlobal writes (entered via `gortex
 // install`). Everything here is codebase-agnostic user-level
-// machinery: MCP config pointing at `gortex serve`, user-level
+// machinery: MCP config pointing at `gortex mcp`, user-level
 // hooks, curated Gortex tool-usage skills, and Gortex slash
 // commands. No per-repo artifacts.
 func (a *Adapter) applyGlobal(env agents.Env, opts agents.ApplyOpts, res *agents.Result) error {
@@ -183,7 +183,7 @@ func (a *Adapter) applyGlobal(env agents.Env, opts agents.ApplyOpts, res *agents
 		return fmt.Errorf("global mode requires a resolved home directory")
 	}
 
-	// 1. ~/.claude.json — MCP stanza pointing at `gortex serve`.
+	// 1. ~/.claude.json — MCP stanza pointing at `gortex mcp`.
 	mcpPath := userClaudeJSONPath(env.Home)
 	action, err := upsertGlobalMCPConfig(w, mcpPath, opts)
 	if err != nil {
@@ -304,7 +304,7 @@ func upsertGlobalMCPConfig(w io.Writer, path string, opts agents.ApplyOpts) (age
 	}
 	entry := map[string]any{
 		"command": exe,
-		"args":    []string{"serve"},
+		"args":    []string{"mcp"},
 		"env":     map[string]any{},
 	}
 

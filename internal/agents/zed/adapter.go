@@ -13,7 +13,7 @@
 //	    "gortex": {
 //	      "source": "custom",
 //	      "command": "gortex",
-//	      "args": ["serve", "--index", ".", "--watch"],
+//	      "args": ["mcp", "--index", ".", "--watch"],
 //	      "env": {"GORTEX_INDEX_WORKERS": "8"}
 //	    }
 //	  }
@@ -120,7 +120,7 @@ func (a *Adapter) Apply(env agents.Env, opts agents.ApplyOpts) (*agents.Result, 
 		servers["gortex"] = map[string]any{
 			"source":  "custom",
 			"command": "gortex",
-			"args":    []string{"serve", "--index", ".", "--watch"},
+			"args":    []string{"mcp", "--index", ".", "--watch"},
 			"env":     map[string]string{"GORTEX_INDEX_WORKERS": "8"},
 		}
 		root["context_servers"] = servers

@@ -7,7 +7,7 @@
 //	  "mcp": {
 //	    "gortex": {
 //	      "type": "local",
-//	      "command": ["gortex", "serve", ...],
+//	      "command": ["gortex", "mcp", ...],
 //	      "environment": {...},
 //	      "enabled": true
 //	    }
@@ -88,7 +88,7 @@ func (a *Adapter) Apply(env agents.Env, opts agents.ApplyOpts) (*agents.Result, 
 		}
 		mcpSection["gortex"] = map[string]any{
 			"type":    "local",
-			"command": []string{"gortex", "serve", "--index", ".", "--watch"},
+			"command": []string{"gortex", "mcp", "--index", ".", "--watch"},
 			"environment": map[string]string{
 				"GORTEX_INDEX_WORKERS": "8",
 			},

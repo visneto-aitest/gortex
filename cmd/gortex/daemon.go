@@ -33,7 +33,7 @@ var daemonCmd = &cobra.Command{
 MCP client (Claude Code, Cursor, Kiro, ...) plus the CLI from one shared
 index. See spec-daemon.md for the architecture.
 
-If no daemon is running, ` + "`gortex serve`" + ` still works standalone — the daemon
+If no daemon is running, ` + "`gortex mcp`" + ` still works standalone — the daemon
 is additive, not required.`,
 }
 

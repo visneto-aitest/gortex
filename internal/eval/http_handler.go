@@ -7,21 +7,21 @@ import (
 	"strings"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/zzet/gortex/internal/bridge"
+	"github.com/zzet/gortex/internal/server"
 	"github.com/zzet/gortex/internal/graph"
 	"go.uber.org/zap"
 )
 
-// Handler extends bridge.Handler with eval-specific endpoints (/augment).
+// Handler extends server.Handler with eval-specific endpoints (/augment).
 // It inherits /health, /tools, /tool/{name}, and /stats from the base handler.
 type Handler struct {
-	*bridge.Handler
+	*server.Handler
 }
 
 // NewHandler creates an eval HTTP handler that dispatches to MCP tools.
 // It provides all bridge endpoints plus the eval-specific /augment endpoint.
 func NewHandler(mcpServer *mcpserver.MCPServer, g *graph.Graph, version string, logger *zap.Logger) *Handler {
-	base := bridge.NewHandler(mcpServer, g, version, logger)
+	base := server.NewHandler(mcpServer, g, version, logger)
 	h := &Handler{Handler: base}
 	base.Mux().HandleFunc("POST /augment", h.handleAugment)
 	return h
@@ -51,18 +51,18 @@ type augmentSymbol struct {
 func (h *Handler) handleAugment(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		bridge.WriteJSONError(w, http.StatusBadRequest, "failed to read request body")
+		server.WriteJSONError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
 
 	var req augmentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		bridge.WriteJSONError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
+		server.WriteJSONError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
 		return
 	}
 
 	if req.Pattern == "" {
-		bridge.WriteJSONError(w, http.StatusBadRequest, "missing 'pattern' field")
+		server.WriteJSONError(w, http.StatusBadRequest, "missing 'pattern' field")
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *Handler) handleAugment(w http.ResponseWriter, r *http.Request) {
 		Pattern: req.Pattern,
 		Symbols: symbols,
 	}
-	bridge.WriteJSON(w, http.StatusOK, resp)
+	server.WriteJSON(w, http.StatusOK, resp)
 }
 
 // --- Helpers ---

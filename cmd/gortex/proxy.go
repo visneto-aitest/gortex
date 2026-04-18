@@ -13,7 +13,7 @@ import (
 )
 
 // runProxy relays MCP JSON-RPC traffic between stdio (the MCP client) and
-// the daemon's Unix socket. Exactly what `gortex serve` does when it
+// the daemon's Unix socket. Exactly what `gortex mcp` does when it
 // detects a running daemon and isn't forced to embedded mode.
 //
 // Returns (true, nil) when the proxy ran and finished cleanly. Returns
@@ -39,7 +39,7 @@ func runProxy(ctx context.Context) (ran bool, err error) {
 	defer func() { _ = client.Close() }()
 
 	fmt.Fprintf(os.Stderr,
-		"[gortex serve] proxying to daemon (session %s, default_repo=%q)\n",
+		"[gortex mcp] proxying to daemon (session %s, default_repo=%q)\n",
 		client.Ack.SessionID, client.Ack.DefaultRepo)
 
 	// Bidirectional pump:
@@ -114,12 +114,12 @@ func detectClientName() string {
 	return "unknown"
 }
 
-// shouldTryProxy returns true when `gortex serve` should attempt to
+// shouldTryProxy returns true when `gortex mcp` should attempt to
 // proxy through the daemon before falling back to embedded mode.
 //
 // The rule: proxy when stdin is a pipe (we were spawned by an MCP
 // client) and the user hasn't passed --no-daemon. Users running
-// `gortex serve` in a terminal expect the embedded behavior they've
+// `gortex mcp` in a terminal expect the embedded behavior they've
 // always had.
 func shouldTryProxy(forceNoDaemon, forceProxy bool) bool {
 	if forceNoDaemon {

@@ -1,11 +1,11 @@
-package bridge
+package server
 
 import (
 	"net/http"
 	"slices"
 )
 
-// CORSOptions configures CORS behavior for the bridge HTTP server.
+// CORSOptions configures CORS behavior for the server HTTP API.
 type CORSOptions struct {
 	AllowOrigins []string // Allowed origins; default ["*"].
 }

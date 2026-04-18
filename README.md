@@ -229,14 +229,14 @@ gortex init --hooks-only                # (re)install repo-local hooks only, ski
 gortex init --no-hooks                  # full init but skip hook installation
 
 # Run the MCP server standalone (auto-detects daemon via stdio; --no-daemon forces embedded):
-gortex serve --index /path/to/repo --watch
-gortex serve --no-daemon --watch        # explicit embedded mode
+gortex mcp --index /path/to/repo --watch
+gortex mcp --no-daemon --watch          # explicit embedded mode
 ```
 
 ### Other commands
 
 ```bash
-gortex bridge --index . --web            # HTTP bridge API + web graph UI at :4747
+gortex server --index . --web           # HTTP server API + web graph UI at :4747
 gortex savings                           # cumulative tokens saved + $ avoided across sessions
 gortex version
 ```
@@ -312,8 +312,8 @@ Environment variables:
 ```bash
 gortex track /path/to/repo          # Add a repo to the workspace
 gortex untrack /path/to/repo        # Remove a repo from the workspace
-gortex serve --track /path/to/repo  # Track additional repos on startup
-gortex serve --project my-saas      # Set active project scope
+gortex mcp --track /path/to/repo    # Track additional repos on startup
+gortex mcp --project my-saas        # Set active project scope
 gortex index repo-a/ repo-b/        # Index multiple repos
 gortex status                       # Per-repo and per-project stats
 
@@ -373,8 +373,8 @@ Tool-usage guidance for agents that have a user-level surface (Claude Code, Anti
 ```
 gortex install               One-time machine-wide setup (user-level MCP, skills, hooks, daemon wiring)
 gortex init [path]           Per-repo setup (.mcp.json, hooks, community routing, per-community SKILL.md)
-gortex serve [flags]         Start the MCP server (--bridge to add HTTP API)
-gortex bridge [flags]        Start standalone HTTP bridge API
+gortex mcp [flags]           Start the MCP server (--server to add HTTP API)
+gortex server [flags]        Start standalone HTTP server API
 gortex eval-server [flags]   Start eval HTTP server for benchmarking
 gortex context [flags]       Generate portable context briefing for a task
 gortex savings [flags]       Show cumulative token savings + cost avoided across sessions
@@ -510,7 +510,7 @@ Gortex includes a standalone Next.js web application (`web/` directory) with 10 
 
 ```bash
 # Start the backend
-gortex bridge --index /path/to/repo --web --port 4747
+gortex server --index /path/to/repo --web --port 4747
 
 # Start the web UI
 cd web && npm run dev
@@ -521,7 +521,7 @@ cd web && npm run dev
 |------|----------|
 | **Dashboard** | Health, stats, language pie chart, node kind bar chart |
 | **Graph Explorer** | Interactive Sigma.js + ForceAtlas2, node filters, selection, detail panel |
-| **Search** | Semantic search via bridge API, results grouped by kind |
+| **Search** | Semantic search via server API, results grouped by kind |
 | **Symbol Detail** | Source code, signature, callers/callees/usages/deps tabs |
 | **Communities** | Community cards with cohesion bars, expandable members |
 | **Processes** | Execution flow table with step lists |
@@ -530,18 +530,18 @@ cd web && npm run dev
 | **Services** | Service-level graph visualization with per-repo stats |
 | **AI Chat** | LLM-powered chat with code context (placeholder) |
 
-The legacy embedded web UI (Sigma.js on `:8765`) is still available via `gortex serve --web`.
+The legacy embedded web UI (Sigma.js on `:8765`) is still available via `gortex mcp --web`.
 
-## Bridge Mode
+## Server Mode
 
-The `gortex bridge` command exposes all MCP tools as an HTTP/JSON API for external integrations:
+The `gortex server` command exposes all MCP tools as an HTTP/JSON API for external integrations:
 
 ```bash
-# Standalone bridge with web UI
-gortex bridge --index /path/to/repo --web --port 4747
+# Standalone HTTP server with web UI
+gortex server --index /path/to/repo --web --port 4747
 
-# Bridge alongside MCP stdio
-gortex serve --index /path/to/repo --bridge --port 8765
+# HTTP server alongside MCP stdio
+gortex mcp --index /path/to/repo --server --port 8765
 ```
 
 **Endpoints:**
@@ -552,7 +552,7 @@ gortex serve --index /path/to/repo --bridge --port 8765
 | `/tool/{name}` | POST | Invoke any MCP tool with JSON arguments |
 | `/stats` | GET | Graph statistics by kind and language |
 
-CORS is enabled by default (`--cors-origin '*'`). The bridge can serve the web UI on the same port with `--web`.
+CORS is enabled by default (`--cors-origin '*'`). The server can serve the web UI on the same port with `--web`.
 
 ## Cross-Repo API Contracts
 
@@ -560,7 +560,7 @@ Gortex detects API contracts across repos and matches providers to consumers:
 
 ```bash
 # After indexing, contracts are auto-detected
-gortex bridge --index . --web
+gortex server --index . --web
 
 # Via MCP tools
 contracts                        # list all detected contracts (default action)
@@ -607,14 +607,14 @@ Hybrid BM25 + vector search with Reciprocal Rank Fusion (RRF). Multiple embeddin
 
 ```bash
 # Built-in word vectors (always available, zero setup)
-gortex serve --index . --embeddings
+gortex mcp --index . --embeddings
 
 # Ollama (best quality, local)
 ollama pull nomic-embed-text
-gortex serve --index . --embeddings-url http://localhost:11434
+gortex mcp --index . --embeddings-url http://localhost:11434
 
 # OpenAI (best quality, cloud)
-gortex serve --index . --embeddings-url https://api.openai.com/v1 \
+gortex mcp --index . --embeddings-url https://api.openai.com/v1 \
   --embeddings-model text-embedding-3-small
 ```
 
@@ -667,13 +667,13 @@ Gortex snapshots the graph to disk on shutdown and restores it on startup, with 
 
 ```bash
 # Default cache directory: ~/.cache/gortex/
-gortex serve --index /path/to/repo
+gortex mcp --index /path/to/repo
 
 # Custom cache directory
-gortex serve --index /path/to/repo --cache-dir /tmp/gortex-cache
+gortex mcp --index /path/to/repo --cache-dir /tmp/gortex-cache
 
 # Disable caching
-gortex serve --index /path/to/repo --no-cache
+gortex mcp --index /path/to/repo --no-cache
 ```
 
 The persistence layer uses a pluggable backend interface (`persistence.Store`). The default backend serializes as gob+gzip. Cache is keyed by repo path + git commit hash, with version validation to invalidate on binary upgrades.
