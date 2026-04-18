@@ -32,6 +32,8 @@ import (
 
 var (
 	serverPort       int
+	serverBind       string
+	serverAuthToken  string
 	serverIndex      string
 	serverCORSOrigin string
 	serverWatch      bool
@@ -50,12 +52,14 @@ var (
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start the HTTP server API for external integrations",
-	Long:  "Exposes Gortex MCP tools as an HTTP/JSON API. Endpoints: /health, /tools, /tool/{name}, /stats, /v1/graph, /v1/events. The UI is a separate Next.js frontend (see web/) that talks to this server over HTTP.",
+	Long:  "Exposes Gortex MCP tools as an HTTP/JSON API under /v1/*: /v1/health, /v1/tools, /v1/tools/{name}, /v1/stats, /v1/graph, /v1/events. The UI is a separate Next.js frontend (see web/) that talks to this server over HTTP.",
 	RunE:  runServer,
 }
 
 func init() {
 	serverCmd.Flags().IntVar(&serverPort, "port", 4747, "HTTP port to listen on")
+	serverCmd.Flags().StringVar(&serverBind, "bind", "127.0.0.1", "bind address (e.g. 127.0.0.1, 0.0.0.0); requires --auth-token when not localhost")
+	serverCmd.Flags().StringVar(&serverAuthToken, "auth-token", "", "bearer token required on every /v1/* request (fallback: $GORTEX_SERVER_TOKEN)")
 	serverCmd.Flags().StringVar(&serverIndex, "index", "", "repository path to index on startup")
 	serverCmd.Flags().StringVar(&serverCORSOrigin, "cors-origin", "*", "allowed CORS origin (use '*' for any)")
 	serverCmd.Flags().BoolVar(&serverWatch, "watch", false, "keep graph in sync with filesystem changes")
@@ -75,6 +79,23 @@ func init() {
 func runServer(_ *cobra.Command, _ []string) error {
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()
+
+	// Resolve auth token: flag wins, env var fallback.
+	authToken := serverAuthToken
+	if authToken == "" {
+		authToken = os.Getenv("GORTEX_SERVER_TOKEN")
+	}
+
+	// Bind/auth policy. Without a token we force the listener onto
+	// localhost; binding to any external interface without auth is a
+	// foot-gun (anyone on the network could invoke arbitrary MCP
+	// tools), so reject that combination up front.
+	if authToken == "" {
+		if !isLocalhostBind(serverBind) {
+			return fmt.Errorf("--bind %q requires --auth-token (or $GORTEX_SERVER_TOKEN); refusing to expose unauthenticated server on external interface", serverBind)
+		}
+		fmt.Fprintln(os.Stderr, "[gortex] server: unauthenticated mode; localhost only")
+	}
 
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -257,17 +278,18 @@ func runServer(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Wrap with CORS.
+	// Wrap with auth (no-op when authToken is empty), then CORS.
+	handler := server.WithAuth(serverHandler, authToken)
 	corsOpts := server.CORSOptions{AllowOrigins: []string{serverCORSOrigin}}
-	handler := server.WithCORS(serverHandler, corsOpts)
+	handler = server.WithCORS(handler, corsOpts)
 
-	addr := fmt.Sprintf(":%d", serverPort)
+	addr := fmt.Sprintf("%s:%d", serverBind, serverPort)
 	httpServer := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 	}
 
-	fmt.Fprintf(os.Stderr, "[gortex] server listening on http://localhost:%d\n", serverPort)
+	fmt.Fprintf(os.Stderr, "[gortex] server listening on http://%s\n", addr)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -377,4 +399,14 @@ func runServer(_ *cobra.Command, _ []string) error {
 
 		return httpServer.Close()
 	}
+}
+
+// isLocalhostBind reports whether bind resolves to the loopback
+// interface. An empty string means "all interfaces" and is not safe.
+func isLocalhostBind(bind string) bool {
+	switch bind {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
 }

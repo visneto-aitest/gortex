@@ -35,6 +35,8 @@ var (
 	mcpIndex      string
 	mcpTransport  string
 	mcpPort       int
+	mcpBind       string
+	mcpAuthToken  string
 	mcpWatch      bool
 	mcpServerAPI  bool
 	mcpCORSOrigin string
@@ -66,6 +68,8 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpWatch, "watch", false, "keep graph in sync with filesystem changes")
 	mcpCmd.Flags().IntVar(&mcpDebounce, "debounce", 150, "debounce delay in ms")
 	mcpCmd.Flags().BoolVar(&mcpServerAPI, "server", false, "start HTTP server API alongside MCP stdio")
+	mcpCmd.Flags().StringVar(&mcpBind, "bind", "127.0.0.1", "bind address for --server; requires --auth-token when not localhost")
+	mcpCmd.Flags().StringVar(&mcpAuthToken, "auth-token", "", "bearer token for --server's /v1/* requests (fallback: $GORTEX_SERVER_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpCORSOrigin, "cors-origin", "*", "allowed CORS origin for server API")
 	mcpCmd.Flags().StringSliceVar(&mcpTrack, "track", nil, "additional repository paths to track")
 	mcpCmd.Flags().StringVar(&mcpProject, "project", "", "active project name")
@@ -275,12 +279,27 @@ func runMCP(cmd *cobra.Command, args []string) error {
 
 	// Start server HTTP API if requested.
 	if mcpServerAPI {
+		authToken := mcpAuthToken
+		if authToken == "" {
+			authToken = os.Getenv("GORTEX_SERVER_TOKEN")
+		}
+		if authToken == "" {
+			if !isLocalhostBind(mcpBind) {
+				return fmt.Errorf("--bind %q requires --auth-token (or $GORTEX_SERVER_TOKEN); refusing to expose unauthenticated server on external interface", mcpBind)
+			}
+			fmt.Fprintln(os.Stderr, "[gortex] server: unauthenticated mode; localhost only")
+		}
+
 		serverHandler := server.NewHandler(srv.MCPServer(), g, version, logger)
+		if cm != nil {
+			serverHandler.SetConfigManager(cm)
+		}
+		handler := server.WithAuth(serverHandler, authToken)
 		corsOpts := server.CORSOptions{AllowOrigins: []string{mcpCORSOrigin}}
-		handler := server.WithCORS(serverHandler, corsOpts)
+		handler = server.WithCORS(handler, corsOpts)
 		go func() {
-			serverAddr := fmt.Sprintf(":%d", mcpPort)
-			fmt.Fprintf(os.Stderr, "[gortex] server API at http://localhost:%d\n", mcpPort)
+			serverAddr := fmt.Sprintf("%s:%d", mcpBind, mcpPort)
+			fmt.Fprintf(os.Stderr, "[gortex] server API at http://%s\n", serverAddr)
 			if err := http.ListenAndServe(serverAddr, handler); err != nil && err != http.ErrServerClosed {
 				fmt.Fprintf(os.Stderr, "[gortex] server API error: %v\n", err)
 			}
