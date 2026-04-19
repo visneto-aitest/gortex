@@ -64,21 +64,25 @@ func (s *Server) handleGetCommunities(_ context.Context, req mcp.CallToolRequest
 	// of paths each). Callers who want that drill into a specific
 	// community via `id`; the detail response includes the full member
 	// set. `file_count` preserves size signal without the string array.
+	// `repo_prefix` is the majority repo of the community's members so
+	// UIs can render a badge without paging through every member id.
 	type summary struct {
-		ID        string  `json:"id"`
-		Label     string  `json:"label"`
-		Size      int     `json:"size"`
-		FileCount int     `json:"file_count"`
-		Cohesion  float64 `json:"cohesion"`
+		ID         string  `json:"id"`
+		Label      string  `json:"label"`
+		Size       int     `json:"size"`
+		FileCount  int     `json:"file_count"`
+		Cohesion   float64 `json:"cohesion"`
+		RepoPrefix string  `json:"repo_prefix"`
 	}
 	var summaries []summary
 	for _, c := range comms.Communities {
 		summaries = append(summaries, summary{
-			ID:        c.ID,
-			Label:     c.Label,
-			Size:      c.Size,
-			FileCount: len(c.Files),
-			Cohesion:  c.Cohesion,
+			ID:         c.ID,
+			Label:      c.Label,
+			Size:       c.Size,
+			FileCount:  len(c.Files),
+			Cohesion:   c.Cohesion,
+			RepoPrefix: majorityRepoPrefix(c.Members),
 		})
 	}
 	return mcp.NewToolResultJSON(map[string]any{
@@ -112,29 +116,90 @@ func (s *Server) handleGetProcesses(_ context.Context, req mcp.CallToolRequest) 
 		})
 	}
 
+	// `repo_prefixes` is the ordered set of distinct "owner/repo" prefixes
+	// the flow's steps cross — the UI renders these as trail badges
+	// without needing the full step id list.
 	type summary struct {
-		ID         string  `json:"id"`
-		Name       string  `json:"name"`
-		EntryPoint string  `json:"entry_point"`
-		StepCount  int     `json:"step_count"`
-		FileCount  int     `json:"file_count"`
-		Score      float64 `json:"score"`
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		EntryPoint   string   `json:"entry_point"`
+		StepCount    int      `json:"step_count"`
+		FileCount    int      `json:"file_count"`
+		Score        float64  `json:"score"`
+		RepoPrefixes []string `json:"repo_prefixes"`
 	}
 	var summaries []summary
 	for _, p := range procs.Processes {
 		summaries = append(summaries, summary{
-			ID:         p.ID,
-			Name:       p.Name,
-			EntryPoint: p.EntryPoint,
-			StepCount:  p.StepCount,
-			FileCount:  len(p.Files),
-			Score:      p.Score,
+			ID:           p.ID,
+			Name:         p.Name,
+			EntryPoint:   p.EntryPoint,
+			StepCount:    p.StepCount,
+			FileCount:    len(p.Files),
+			Score:        p.Score,
+			RepoPrefixes: uniqueRepoPrefixes(p.Steps),
 		})
 	}
 	return mcp.NewToolResultJSON(map[string]any{
 		"processes": summaries,
 		"total":     len(summaries),
 	})
+}
+
+// repoPrefixOf extracts the repo prefix from a node ID of the form
+// "<repoPrefix>/<file-path>::<symbol>". The first `/` separates the
+// repo name from the file path, and `::` separates the file from the
+// symbol. IDs that don't contain `/` before the `::` (e.g.
+// "unresolved::OSTRACE") have no repo prefix and return empty.
+func repoPrefixOf(id string) string {
+	pathPart := id
+	if i := strings.Index(id, "::"); i >= 0 {
+		pathPart = id[:i]
+	}
+	if j := strings.Index(pathPart, "/"); j >= 0 {
+		return pathPart[:j]
+	}
+	return ""
+}
+
+// majorityRepoPrefix returns the most common repo prefix from a list of
+// node IDs. Empty when no ID carries a prefix.
+func majorityRepoPrefix(ids []string) string {
+	counts := make(map[string]int, 4)
+	for _, id := range ids {
+		if p := repoPrefixOf(id); p != "" {
+			counts[p]++
+		}
+	}
+	best := ""
+	bestN := 0
+	for k, n := range counts {
+		if n > bestN {
+			best = k
+			bestN = n
+		}
+	}
+	return best
+}
+
+// uniqueRepoPrefixes returns the ordered set of distinct repo prefixes
+// touched by a step list. Order is preserved so "crosses" badges render
+// in call sequence.
+func uniqueRepoPrefixes(ids []string) []string {
+	seen := make(map[string]struct{}, 4)
+	out := make([]string, 0, 4)
+	for _, id := range ids {
+		p := repoPrefixOf(id)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (s *Server) handleDetectChanges(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

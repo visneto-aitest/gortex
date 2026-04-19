@@ -217,24 +217,53 @@ type processEntry struct {
 	Crosses []string `json:"crosses"` // repo prefixes this flow touches
 }
 
+// rawProcessSummary mirrors the MCP get_processes list response. Files
+// and Steps are intentionally omitted — the list now carries precomputed
+// step_count / file_count / repo_prefixes so the dashboard shape doesn't
+// require a second call per process.
+type rawProcessSummary struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	EntryPoint   string   `json:"entry_point"`
+	StepCount    int      `json:"step_count"`
+	FileCount    int      `json:"file_count"`
+	Score        float64  `json:"score"`
+	RepoPrefixes []string `json:"repo_prefixes"`
+}
+
+func processEntryFromRaw(p rawProcessSummary) processEntry {
+	risk := "ok"
+	switch {
+	case p.Score > 1000:
+		risk = "risk"
+	case p.Score > 500:
+		risk = "warn"
+	}
+	crosses := p.RepoPrefixes
+	if crosses == nil {
+		crosses = []string{}
+	}
+	return processEntry{
+		ID:      p.ID,
+		Name:    p.Name,
+		Entry:   p.EntryPoint,
+		Steps:   p.StepCount,
+		Files:   p.FileCount,
+		Repos:   len(crosses),
+		Score:   int(p.Score),
+		Risk:    risk,
+		Crosses: crosses,
+	}
+}
+
 func (h *Handler) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	raw := h.CallTool(r.Context(), "get_processes", map[string]any{})
 	if raw == "" {
 		WriteJSON(w, http.StatusOK, map[string]any{"processes": []processEntry{}})
 		return
 	}
-	type rawProcess struct {
-		ID         string   `json:"id"`
-		Name       string   `json:"name"`
-		EntryPoint string   `json:"entry_point"`
-		Steps      []string `json:"steps"`
-		StepCount  int      `json:"step_count"`
-		Files      []string `json:"files"`
-		FileCount  int      `json:"file_count"`
-		Score      float64  `json:"score"`
-	}
 	type wrap struct {
-		Processes []rawProcess `json:"processes"`
+		Processes []rawProcessSummary `json:"processes"`
 	}
 	var w0 wrap
 	if err := json.Unmarshal([]byte(raw), &w0); err != nil {
@@ -243,58 +272,10 @@ func (h *Handler) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]processEntry, 0, len(w0.Processes))
 	for _, p := range w0.Processes {
-		crosses := uniqueRepoPrefixes(p.Steps)
-		risk := "ok"
-		switch {
-		case p.Score > 1000:
-			risk = "risk"
-		case p.Score > 500:
-			risk = "warn"
-		}
-		steps := p.StepCount
-		if steps == 0 {
-			steps = len(p.Steps)
-		}
-		files := p.FileCount
-		if files == 0 {
-			files = len(p.Files)
-		}
-		out = append(out, processEntry{
-			ID:      p.ID,
-			Name:    p.Name,
-			Entry:   p.EntryPoint,
-			Steps:   steps,
-			Files:   files,
-			Repos:   len(crosses),
-			Score:   int(p.Score),
-			Risk:    risk,
-			Crosses: crosses,
-		})
+		out = append(out, processEntryFromRaw(p))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	WriteJSON(w, http.StatusOK, map[string]any{"processes": out})
-}
-
-// uniqueRepoPrefixes derives the set of distinct "owner/repo" prefixes
-// from a list of node IDs of the form "<repoPrefix>:<file>::<symbol>".
-// Order is preserved (first occurrence wins) so the trace order in the
-// UI mirrors the call sequence.
-func uniqueRepoPrefixes(stepIDs []string) []string {
-	seen := make(map[string]struct{}, len(stepIDs))
-	out := make([]string, 0, 4)
-	for _, id := range stepIDs {
-		idx := strings.Index(id, ":")
-		if idx < 0 {
-			continue
-		}
-		repo := id[:idx]
-		if _, ok := seen[repo]; ok {
-			continue
-		}
-		seen[repo] = struct{}{}
-		out = append(out, repo)
-	}
-	return out
 }
 
 // --- /v1/contracts ---
@@ -408,9 +389,9 @@ func contains(ss []string, x string) bool {
 // --- /v1/communities ---
 //
 // Returns the community detection result reshaped for the dashboard
-// communities card. Each community gets symbol/file counts and a
-// derived "growth" placeholder of "0%" — historical growth requires a
-// time-series store the server doesn't yet maintain (see web/AGENTS.md).
+// communities card. The MCP get_communities list summary already
+// carries the majority repo prefix and file count so we don't need a
+// second call per community.
 
 type communityEntry struct {
 	ID       string  `json:"id"`
@@ -419,7 +400,6 @@ type communityEntry struct {
 	Symbols  int     `json:"symbols"`
 	Files    int     `json:"files"`
 	Cohesion float64 `json:"cohesion"`
-	Growth   string  `json:"growth"`
 }
 
 func (h *Handler) handleCommunities(w http.ResponseWriter, r *http.Request) {
@@ -429,12 +409,12 @@ func (h *Handler) handleCommunities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type rawComm struct {
-		ID       string   `json:"id"`
-		Label    string   `json:"label"`
-		Members  []string `json:"members"`
-		Files    []string `json:"files"`
-		Size     int      `json:"size"`
-		Cohesion float64  `json:"cohesion"`
+		ID         string  `json:"id"`
+		Label      string  `json:"label"`
+		Size       int     `json:"size"`
+		FileCount  int     `json:"file_count"`
+		Cohesion   float64 `json:"cohesion"`
+		RepoPrefix string  `json:"repo_prefix"`
 	}
 	type wrap struct {
 		Communities []rawComm `json:"communities"`
@@ -447,22 +427,13 @@ func (h *Handler) handleCommunities(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]communityEntry, 0, len(w0.Communities))
 	for _, c := range w0.Communities {
-		// Repo prefix = prefix of first member; community labels can
-		// span repos but the design only shows one badge so we pick the
-		// majority prefix.
-		repo := majorityRepoPrefix(c.Members)
-		size := c.Size
-		if size == 0 {
-			size = len(c.Members)
-		}
 		out = append(out, communityEntry{
 			ID:       c.ID,
 			Name:     c.Label,
-			Repo:     repo,
-			Symbols:  size,
-			Files:    len(c.Files),
+			Repo:     c.RepoPrefix,
+			Symbols:  c.Size,
+			Files:    c.FileCount,
 			Cohesion: c.Cohesion,
-			Growth:   "0%",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Symbols > out[j].Symbols })
@@ -470,29 +441,6 @@ func (h *Handler) handleCommunities(w http.ResponseWriter, r *http.Request) {
 		"communities": out,
 		"modularity":  w0.Modularity,
 	})
-}
-
-func majorityRepoPrefix(ids []string) string {
-	if len(ids) == 0 {
-		return ""
-	}
-	counts := make(map[string]int)
-	for _, id := range ids {
-		i := strings.Index(id, ":")
-		if i < 0 {
-			continue
-		}
-		counts[id[:i]]++
-	}
-	best := ""
-	bestN := -1
-	for k, n := range counts {
-		if n > bestN {
-			best = k
-			bestN = n
-		}
-	}
-	return best
 }
 
 // --- /v1/guards ---
@@ -826,50 +774,14 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Top processes for the inline preview. The full list is on the
 	// Processes page; here we cap at 6 so the dashboard stays compact.
 	if raw := h.CallTool(ctx, "get_processes", map[string]any{}); raw != "" {
-		type rawProcess struct {
-			ID         string   `json:"id"`
-			Name       string   `json:"name"`
-			EntryPoint string   `json:"entry_point"`
-			Steps      []string `json:"steps"`
-			StepCount  int      `json:"step_count"`
-			Files      []string `json:"files"`
-			FileCount  int      `json:"file_count"`
-			Score      float64  `json:"score"`
-		}
 		type wrap struct {
-			Processes []rawProcess `json:"processes"`
+			Processes []rawProcessSummary `json:"processes"`
 		}
 		var w0 wrap
 		if json.Unmarshal([]byte(raw), &w0) == nil {
 			procs := make([]processEntry, 0, len(w0.Processes))
 			for _, p := range w0.Processes {
-				crosses := uniqueRepoPrefixes(p.Steps)
-				risk := "ok"
-				switch {
-				case p.Score > 1000:
-					risk = "risk"
-				case p.Score > 500:
-					risk = "warn"
-				}
-				steps := p.StepCount
-				if steps == 0 {
-					steps = len(p.Steps)
-				}
-				files := p.FileCount
-				if files == 0 {
-					files = len(p.Files)
-				}
-				procs = append(procs, processEntry{
-					ID:      p.ID,
-					Name:    p.Name,
-					Entry:   p.EntryPoint,
-					Steps:   steps,
-					Files:   files,
-					Repos:   len(crosses),
-					Score:   int(p.Score),
-					Risk:    risk,
-					Crosses: crosses,
-				})
+				procs = append(procs, processEntryFromRaw(p))
 			}
 			sort.Slice(procs, func(i, j int) bool { return procs[i].Score > procs[j].Score })
 			if len(procs) > 6 {

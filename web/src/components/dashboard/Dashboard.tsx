@@ -3,11 +3,10 @@
 import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Icon } from '@/components/primitives/Icon'
-import { Sparkline, KindRing, HBar, StackedBar } from '@/components/primitives/Charts'
+import { KindRing, HBar, StackedBar } from '@/components/primitives/Charts'
 import { CaveatBadge } from '@/components/primitives/Caveat'
 import { useDashboard } from '@/lib/hooks'
 import { useTweaks } from '@/lib/tweaks'
-import { FAKE_SPARK } from '@/lib/seed'
 import type { Repo, KindCount, LanguageCount, Caveat, Process, Activity } from '@/lib/schema'
 
 const KIND_COLORS: Record<string, string> = {
@@ -72,8 +71,6 @@ function RepoCard({ r }: { r: Repo }) {
     { label: 'interfaces', value: r.interfaces, color: 'var(--k-interface)' },
     { label: 'variables',  value: r.vars,       color: 'var(--k-variable)' },
   ]
-  // Sparkline mock — see seed.ts: time-series of repo size is not stored.
-  const spark = FAKE_SPARK[r.id] ?? FAKE_SPARK.default
   return (
     <div className="repo-card">
       <div className="repo-hd">
@@ -103,11 +100,10 @@ function RepoCard({ r }: { r: Repo }) {
         <div style={{ flex: r.interfaces, background: 'var(--k-interface)' }} />
         <div style={{ flex: r.vars,       background: 'var(--k-variable)' }} />
       </div>
-      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginTop: 10 }}>
         <div className="mono faint" style={{ fontSize: 10.5 }}>
           {r.files} files · {r.lang}
         </div>
-        <Sparkline data={spark} stroke={r.color} fill={r.color} w={56} h={14} />
       </div>
     </div>
   )

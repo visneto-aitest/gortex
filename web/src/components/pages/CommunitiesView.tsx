@@ -1,9 +1,8 @@
 'use client'
 
 import { Icon } from '@/components/primitives/Icon'
-import { Sparkline, Meter } from '@/components/primitives/Charts'
+import { Meter } from '@/components/primitives/Charts'
 import { useCommunities, useRepos } from '@/lib/hooks'
-import { FAKE_SPARK } from '@/lib/seed'
 
 export function CommunitiesView() {
   const { data, loading, error, refetch } = useCommunities()
@@ -53,40 +52,32 @@ export function CommunitiesView() {
         }}
       >
         {communities.map((c) => (
-          <div
-            key={c.id}
-            className="card"
-            style={{ padding: 14, display: 'grid', gridTemplateColumns: '1fr 180px', gap: 16, alignItems: 'center' }}
-          >
-            <div>
-              <div className="hstack" style={{ gap: 6 }}>
-                <Icon name="caret" size={10} />
-                <span className="mono" style={{ fontSize: 14, color: 'var(--fg-0)' }}>{c.name}</span>
-                {c.repo && <span className="tag-dim">{c.repo}</span>}
-              </div>
-              <div className="hstack" style={{ gap: 8, marginTop: 8, fontSize: 11.5, color: 'var(--fg-2)' }}>
-                <span><Icon name="users" size={11} /> {c.symbols} symbols</span>
-                <span><Icon name="file" size={11} /> {c.files} files</span>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <div className="hstack" style={{ justifyContent: 'space-between', fontSize: 11, color: 'var(--fg-2)' }}>
-                  <span>cohesion</span>
-                  <span className="mono">{(c.cohesion * 100).toFixed(0)}%</span>
-                </div>
-                <Meter
-                  value={c.cohesion * 100}
-                  color={c.cohesion > 0.75 ? 'var(--ok)' : c.cohesion > 0.55 ? 'var(--warn)' : 'var(--danger)'}
-                />
-              </div>
+          <div key={c.id} className="card" style={{ padding: 14 }}>
+            <div className="hstack" style={{ gap: 6 }}>
+              <span
+                style={{
+                  width: 4,
+                  height: 16,
+                  borderRadius: 2,
+                  background: repoColor(c.repo),
+                  display: 'inline-block',
+                }}
+              />
+              <span className="mono" style={{ fontSize: 14, color: 'var(--fg-0)' }}>{c.name}</span>
+              {c.repo && <span className="tag-dim">{c.repo}</span>}
             </div>
-            {/* MOCK: per-community trend sparkline (no time-series storage). */}
-            <div style={{ opacity: 0.6 }}>
-              <Sparkline
-                data={FAKE_SPARK.default}
-                stroke={repoColor(c.repo)}
-                fill={repoColor(c.repo)}
-                w={180}
-                h={40}
+            <div className="hstack" style={{ gap: 8, marginTop: 8, fontSize: 11.5, color: 'var(--fg-2)' }}>
+              <span><Icon name="users" size={11} /> {c.symbols} symbols</span>
+              <span><Icon name="file" size={11} /> {c.files} files</span>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <div className="hstack" style={{ justifyContent: 'space-between', fontSize: 11, color: 'var(--fg-2)' }}>
+                <span>cohesion</span>
+                <span className="mono">{(c.cohesion * 100).toFixed(0)}%</span>
+              </div>
+              <Meter
+                value={c.cohesion * 100}
+                color={c.cohesion > 0.75 ? 'var(--ok)' : c.cohesion > 0.55 ? 'var(--warn)' : 'var(--danger)'}
               />
             </div>
           </div>

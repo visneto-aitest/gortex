@@ -1,23 +1,55 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@/components/primitives/Icon'
 import { CaveatBadge } from '@/components/primitives/Caveat'
-import { useContracts, useGuards } from '@/lib/hooks'
 import {
-  INVESTIGATION_FLOW, INVESTIGATION_NOTES, INVESTIGATION_SOURCE_PEEK,
-  INVESTIGATION_TIMELINE,
-} from '@/lib/seed'
+  useContracts, useGuards, useProcesses, useProcessDetail,
+  useActivity, useSymbolSource,
+} from '@/lib/hooks'
 
-// NOTE: Investigation entities aren't persisted server-side yet — there
-// is no `/v1/investigations` endpoint. Until that lands, the flow trace,
-// hypothesis, source peek and timeline are seeded (see lib/seed.ts).
-// The contracts and guards tiles ARE backed by real /v1/* data.
+// Splits a node ID of the form "<repoPrefix>/<path>::<symbol>" into its
+// parts so we can render a step without extra round-trips. Symbol-only
+// IDs (e.g. "unresolved::OSTRACE") end up with an empty repo and path.
+function parseStepId(id: string): { repo: string; path: string; symbol: string } {
+  const symIdx = id.indexOf('::')
+  const pathPart = symIdx >= 0 ? id.slice(0, symIdx) : id
+  const symbol = symIdx >= 0 ? id.slice(symIdx + 2) : id
+  const slashIdx = pathPart.indexOf('/')
+  if (slashIdx >= 0) {
+    return { repo: pathPart.slice(0, slashIdx), path: pathPart.slice(slashIdx + 1), symbol }
+  }
+  return { repo: '', path: pathPart, symbol }
+}
+
+// Hard cap on how many flow steps we render. Some flows (e.g. sqlite)
+// have 800+ steps — listing them all would drown the tile and the UI
+// doesn't gain much past the first few dozen.
+const STEP_LIMIT = 40
 
 export function InvestigationView() {
-  const [stepIdx, setStepIdx] = useState(3)
+  const { data: processes, loading: procLoading } = useProcesses()
+  const [selectedProc, setSelectedProc] = useState<string | null>(null)
+  useEffect(() => {
+    if (!selectedProc && processes && processes.length > 0) {
+      setSelectedProc(processes[0].id)
+    }
+  }, [processes, selectedProc])
+
+  const { data: detail } = useProcessDetail(selectedProc)
+  const steps = useMemo(() => (detail?.steps ?? []).slice(0, STEP_LIMIT), [detail])
+
+  const [stepIdx, setStepIdx] = useState(0)
+  useEffect(() => { setStepIdx(0) }, [selectedProc])
+
+  const selectedStepId = steps[stepIdx] ?? null
+  const { data: source, loading: sourceLoading } = useSymbolSource(selectedStepId)
+
+  const { data: activity } = useActivity(20)
   const { data: contracts } = useContracts()
   const { data: guards } = useGuards()
+
+  const proc = processes?.find((p) => p.id === selectedProc) ?? processes?.[0]
 
   return (
     <>
@@ -25,56 +57,78 @@ export function InvestigationView() {
         <div>
           <div className="hstack" style={{ gap: 8, marginBottom: 4 }}>
             <Icon name="flask" size={14} />
-            <span className="mono faint" style={{ fontSize: 11 }}>investigation · demo</span>
-            <span className="chip" style={{ color: 'var(--warn)' }}>not persisted</span>
+            <span className="mono faint" style={{ fontSize: 11 }}>
+              investigation · top process by score
+            </span>
           </div>
-          <h1>Email ingest returns 500 intermittently</h1>
+          <h1>{proc?.name ?? (procLoading ? 'Loading flow…' : 'No processes discovered')}</h1>
           <div className="sub">
-            Cross-repo trace · web → core-api → email-worker → worker → tuck_app · pinned by @sam
+            {proc
+              ? `${proc.crosses.length > 0 ? proc.crosses.join(' → ') : 'single repo'} · ${proc.steps} steps · score ${proc.score}`
+              : 'Process detection runs after indexing — try re-indexing the repository.'}
           </div>
         </div>
+        {processes && processes.length > 1 && (
+          <div className="actions">
+            <select
+              value={selectedProc ?? ''}
+              onChange={(e) => setSelectedProc(e.target.value)}
+              className="btn"
+              style={{ padding: '4px 8px' }}
+            >
+              {processes.slice(0, 20).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div style={{ overflow: 'auto', flex: 1 }}>
         <div className="inv-grid">
           <div className="inv-tile inv-c-8">
             <div className="tile-hd">
               <Icon name="route" size={12} />
-              <span className="ti">Request flow</span>
-              <span className="meta">demo · {INVESTIGATION_FLOW.length} steps</span>
+              <span className="ti">Call flow</span>
+              <span className="meta">
+                {detail ? `${steps.length}${detail.steps.length > STEP_LIMIT ? ` of ${detail.steps.length}` : ''} steps` : 'loading…'}
+              </span>
             </div>
             <div className="tile-bd">
-              {INVESTIGATION_FLOW.map((s, i) => {
-                let hop: React.ReactNode = null
-                if (i > 0 && INVESTIGATION_FLOW[i - 1].repo !== s.repo) {
-                  hop = (
-                    <div className="repo-hop">
-                      <Icon name="arrowr" size={10} /> crosses {INVESTIGATION_FLOW[i - 1].repo} → {s.repo}
-                    </div>
-                  )
-                }
+              {steps.length === 0 && !procLoading && (
+                <div className="faint" style={{ fontSize: 12, padding: 14 }}>
+                  No steps available for this process.
+                </div>
+              )}
+              {steps.map((sid, i) => {
+                const cur = parseStepId(sid)
+                const prev = i > 0 ? parseStepId(steps[i - 1]) : null
+                const crosses = prev && prev.repo !== cur.repo ? (
+                  <div className="repo-hop">
+                    <Icon name="arrowr" size={10} /> crosses {prev.repo || '—'} → {cur.repo || '—'}
+                  </div>
+                ) : null
                 return (
-                  <div key={s.idx}>
-                    {hop}
+                  <div key={sid + ':' + i}>
+                    {crosses}
                     <div
-                      className={`flow-step ${s.risk ? 'risk' : ''}`}
+                      className="flow-step"
                       style={{
-                        background: stepIdx === s.idx ? 'var(--accent-soft)' : 'transparent',
+                        background: stepIdx === i ? 'var(--accent-soft)' : 'transparent',
                         borderRadius: 4,
                         cursor: 'pointer',
                       }}
-                      onClick={() => setStepIdx(s.idx)}
+                      onClick={() => setStepIdx(i)}
                     >
                       <div className="idx">
-                        <span className="no">{s.idx}</span>
+                        <span className="no">{i + 1}</span>
                       </div>
                       <div className="body">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <span className="repo-tag">{s.repo}</span>
-                          <span className="where">{s.where}</span>
-                          {s.caveat && <CaveatBadge kind={s.caveat} />}
-                          {s.risk && <CaveatBadge kind="risk" />}
+                          {cur.repo && <span className="repo-tag">{cur.repo}</span>}
+                          <span className="where">
+                            {cur.path ? `${cur.path}:${cur.symbol}` : cur.symbol}
+                          </span>
                         </div>
-                        <div className="what">{s.what}</div>
                       </div>
                     </div>
                   </div>
@@ -86,11 +140,19 @@ export function InvestigationView() {
           <div className="inv-tile inv-c-4">
             <div className="tile-hd">
               <Icon name="file" size={12} />
-              <span className="ti">Source peek · step {stepIdx}</span>
-              <span className="meta mono">demo</span>
+              <span className="ti">Source · step {stepIdx + 1}</span>
+              <span className="meta mono">{selectedStepId ? parseStepId(selectedStepId).symbol : ''}</span>
             </div>
             <div className="tile-bd">
-              <pre className="code" style={{ margin: 0 }}>{INVESTIGATION_SOURCE_PEEK}</pre>
+              {sourceLoading && (
+                <div className="faint" style={{ fontSize: 12 }}>Loading source…</div>
+              )}
+              {!sourceLoading && !source && (
+                <div className="faint" style={{ fontSize: 12 }}>Select a step to view its source.</div>
+              )}
+              {!sourceLoading && source && (
+                <pre className="code" style={{ margin: 0, maxHeight: 420, overflow: 'auto' }}>{source}</pre>
+              )}
             </div>
           </div>
 
@@ -98,31 +160,38 @@ export function InvestigationView() {
             <div className="tile-hd">
               <Icon name="history" size={12} />
               <span className="ti">Recent edits</span>
-              <span className="meta">demo</span>
+              <span className="meta">{activity?.length ?? '…'} from /v1/activity</span>
             </div>
             <div className="tile-bd">
-              {INVESTIGATION_TIMELINE.map((c, i) => (
+              {(activity ?? []).length === 0 && (
+                <div className="faint" style={{ fontSize: 12, padding: 14 }}>
+                  No recent activity — watch mode may be off, or the server just started.
+                </div>
+              )}
+              {(activity ?? []).slice(0, 10).map((a, i) => (
                 <div
                   key={i}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '60px 1fr 70px',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '8px 0',
+                    gridTemplateColumns: '70px 16px 1fr',
+                    alignItems: 'start',
+                    gap: 8,
+                    padding: '7px 0',
                     borderBottom: '1px dashed var(--line-1)',
                     fontSize: 12,
                   }}
                 >
-                  <span className="mono faint" style={{ fontSize: 11 }}>{c.t}</span>
-                  <div>
-                    <div style={{ marginBottom: 2 }}>{c.msg}</div>
-                    <div className="mono faint" style={{ fontSize: 10.5 }}>
-                      {c.who} · <span style={{ color: 'var(--fg-3)' }}>{c.hash}</span>
-                      {c.risk && <span style={{ marginLeft: 8, color: 'var(--warn)' }}>· guard warn</span>}
-                    </div>
-                  </div>
-                  <span className="tag-dim" style={{ textAlign: 'center' }}>open</span>
+                  <span className="mono faint" style={{ fontSize: 11 }}>{formatTimeAgo(a.timestamp)}</span>
+                  <span style={{ color: 'var(--fg-2)', marginTop: 2 }}>
+                    <Icon name={a.kind === 'deleted' ? 'warn' : a.kind === 'created' ? 'check' : 'dot'} size={12} />
+                  </span>
+                  <span>
+                    <span className="mono" style={{ color: 'var(--fg-2)', marginRight: 6 }}>{a.kind}</span>
+                    <span className="mono">{a.file_path}</span>
+                    <span className="faint mono" style={{ marginLeft: 6 }}>
+                      +{a.nodes_added}/-{a.nodes_removed} n
+                    </span>
+                  </span>
                 </div>
               ))}
             </div>
@@ -131,7 +200,7 @@ export function InvestigationView() {
           <div className="inv-tile inv-c-6">
             <div className="tile-hd">
               <Icon name="plug" size={12} />
-              <span className="ti">Contracts (live)</span>
+              <span className="ti">Contracts</span>
               <span className="meta">{contracts?.length ?? '…'} from /v1/contracts</span>
             </div>
             <div className="tile-bd" style={{ padding: 0 }}>
@@ -177,10 +246,10 @@ export function InvestigationView() {
             </div>
           </div>
 
-          <div className="inv-tile inv-c-6">
+          <div className="inv-tile inv-c-12">
             <div className="tile-hd">
               <Icon name="beaker" size={12} />
-              <span className="ti">Guards (live)</span>
+              <span className="ti">Guards</span>
               <span className="meta">{guards?.length ?? '…'} from /v1/guards</span>
             </div>
             <div className="tile-bd" style={{ padding: 0 }}>
@@ -217,24 +286,18 @@ export function InvestigationView() {
               </table>
             </div>
           </div>
-
-          <div className="inv-tile inv-c-12">
-            <div className="tile-hd">
-              <Icon name="file" size={12} />
-              <span className="ti">Notes</span>
-              <span className="meta">demo</span>
-            </div>
-            <div className="tile-bd" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-              <p style={{ margin: '0 0 8px' }}>
-                <b>Hypothesis</b> — {INVESTIGATION_NOTES.hypothesis}
-              </p>
-              <p style={{ margin: '0 0 8px' }}>
-                <b>Next</b> — {INVESTIGATION_NOTES.next}
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </>
   )
+}
+
+function formatTimeAgo(ts: string): string {
+  const t = new Date(ts).getTime()
+  if (!t) return ts
+  const diff = (Date.now() - t) / 1000
+  if (diff < 60) return `${Math.floor(diff)}s`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`
+  return `${Math.floor(diff / 86400)}d`
 }

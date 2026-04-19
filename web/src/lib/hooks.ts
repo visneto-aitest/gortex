@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { api } from './api'
+import { api, type ProcessDetail } from './api'
 import type {
   Repo, Process, Contract, Caveat, Activity, Guard, Community,
   DashboardSnapshot,
@@ -69,6 +69,14 @@ export function useGraph(opts?: { project?: string; repo?: string }): Async<Grap
 
 export function useProcesses(): Async<Process[]> {
   return useAsync(async () => (await api.processes()).processes)
+}
+
+export function useProcessDetail(id: string | null): Async<ProcessDetail | null> {
+  return useAsync(async () => (id ? api.processDetail(id) : Promise.resolve(null)), [id])
+}
+
+export function useSymbolSource(id: string | null): Async<string> {
+  return useAsync(async () => (id ? api.getSymbolSource(id) : Promise.resolve('')), [id])
 }
 
 export function useContracts(): Async<Contract[]> {

@@ -100,6 +100,17 @@ export const api = {
     return res.json()
   },
 
+  // Fetches the full step list + files for a single process. Uses the
+  // `get_processes` MCP tool with the `id` parameter so the response
+  // includes every step's node ID — list endpoints deliberately omit
+  // these to keep the summary light.
+  processDetail: async (id: string): Promise<ProcessDetail | null> => {
+    if (!id) return null
+    try {
+      return await callToolJSON<ProcessDetail>('get_processes', { id })
+    } catch { return null }
+  },
+
   contracts: async (): Promise<{ contracts: Contract[] }> => {
     const res = await serverFetch('/v1/contracts')
     return res.json()
@@ -203,4 +214,14 @@ export type SymbolSearchResult = {
   path: string
   line: number
   sig?: string
+}
+
+export type ProcessDetail = {
+  id: string
+  name: string
+  entry_point: string
+  steps: string[]
+  step_count: number
+  files: string[]
+  score: number
 }

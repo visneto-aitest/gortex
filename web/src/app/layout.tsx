@@ -23,7 +23,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-theme="ink" data-density="comfortable" className={`${ibmPlexSans.variable} ${jetbrainsMono.variable}`}>
-      <body>
+      {/* suppressHydrationWarning: some browser extensions (Grammarly, etc.)
+          add attributes to <body> before React hydrates. */}
+      <body suppressHydrationWarning>
         <AppShell>{children}</AppShell>
       </body>
     </html>

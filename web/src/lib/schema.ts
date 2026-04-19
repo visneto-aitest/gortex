@@ -49,7 +49,6 @@ export type Community = {
   symbols: number
   files: number
   cohesion: number
-  growth: string
 }
 
 export type Guard = {
