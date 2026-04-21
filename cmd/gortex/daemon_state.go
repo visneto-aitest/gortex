@@ -168,6 +168,8 @@ func buildDaemonState(logger *zap.Logger) (*daemonState, error) {
 		srv.SetSemanticManager(semMgr)
 	}
 	srv.InitFeedback("", "")
+	srv.InitCombo("", "", gortexmcp.ModeAI)
+	srv.InitFrecency("", "", gortexmcp.ModeAI)
 
 	if savingsStore, err := savings.Open(savings.DefaultPath()); err == nil {
 		srv.InitSavings(savingsStore, "")

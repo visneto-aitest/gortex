@@ -196,6 +196,15 @@ func (s *Server) handleGetEditingContext(ctx context.Context, req mcp.CallToolRe
 	if len(sg.Nodes) == 0 {
 		return mcp.NewToolResultError("no symbols found for file: " + fp), nil
 	}
+	// Frecency: a file-level editing context is effectively an access to
+	// every symbol defined in that file. Credit each of them — this is
+	// the signal that "the agent is working in this area right now."
+	for _, n := range sg.Nodes {
+		if n.Kind == graph.KindFile {
+			continue
+		}
+		s.frecency.Record(n.ID)
+	}
 
 	out := editingContext{}
 
@@ -406,6 +415,16 @@ func (s *Server) handleGetSymbolSource(ctx context.Context, req mcp.CallToolRequ
 	sess := s.sessionFor(ctx)
 	sess.recordSymbol(id)
 	sess.recordFile(node.FilePath)
+	// Credit this consume back to the most recent matching search_symbols,
+	// if any; no-op when the combo tracker isn't initialised or no search
+	// window is active.
+	if q := sess.attributedQuery(id); q != "" {
+		s.combo.Record(q, id)
+	}
+	// Unconditionally record the access for frecency — this is the "symbols
+	// the agent actually reads" signal, useful even when no prior search
+	// sourced it (agents also fetch symbols by ID from recent history).
+	s.frecency.Record(id)
 
 	if node.StartLine == 0 || node.EndLine == 0 {
 		return mcp.NewToolResultError("symbol has no line range: " + id), nil

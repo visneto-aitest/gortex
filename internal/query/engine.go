@@ -253,7 +253,47 @@ func (e *Engine) searchWithBackend(query string, limit int) []*graph.Node {
 		}
 	}
 
+	// Final tier — bigram-overlap typo rescue. Strictly gated: the
+	// preceding tiers must have produced ZERO results (true "nothing
+	// plausibly matches"), the query must be a single indivisible word
+	// of at least 4 chars (the shape of a typo), and a bigram-providing
+	// backend must be available. Anything else (partial BM25 hits, short
+	// queries, compound queries) skips straight past — bigram scanning
+	// is expensive and noisy, so we pay for it only when we'd otherwise
+	// return nothing at all.
+	if len(out) == 0 && len(query) >= 4 && !strings.ContainsAny(query, " /.:_-") {
+		if bg, ok := e.getSearch().(bigramProvider); ok {
+			keys := len(query) - 1
+			minOverlap := (keys + 1) / 2
+			if minOverlap < 3 {
+				minOverlap = 3
+			}
+			for _, id := range bg.BigramCandidates(query, minOverlap) {
+				if seen[id] {
+					continue
+				}
+				node := e.g.GetNode(id)
+				if node == nil || node.Kind == graph.KindFile || node.Kind == graph.KindImport {
+					continue
+				}
+				seen[id] = true
+				out = append(out, node)
+				if len(out) >= limit {
+					return out
+				}
+			}
+		}
+	}
+
 	return out
+}
+
+// bigramProvider is satisfied by backends that expose a typo-tolerant
+// rescue list. Declared here (not in search) so the engine can adopt
+// rescue without the search interface changing; any backend that can
+// provide bigram candidates just has to implement this method.
+type bigramProvider interface {
+	BigramCandidates(query string, minOverlap int) []string
 }
 
 func (e *Engine) searchSubstring(query string, limit int) []*graph.Node {

@@ -103,6 +103,8 @@ type Server struct {
 	contractRegistry *contracts.Registry
 	semanticMgr      *semantic.Manager
 	feedback         *feedbackManager
+	combo            *comboManager
+	frecency         *frecencyTracker
 }
 
 // sessionFor returns the session-scoped state for the current request.
@@ -136,6 +138,17 @@ type sessionState struct {
 	viewedFiles    []string // recently viewed file paths
 	modifiedFiles  []string // files modified via edit_symbol
 	recentSearches []string // recent search queries
+	// lastSearch captures the most recent search_symbols call so that a
+	// subsequent get_symbol_source / get_editing_context on one of its
+	// results can be attributed back to the query — this is the raw input
+	// to the combo tracker. Reset on every search.
+	lastSearch lastSearchState
+}
+
+type lastSearchState struct {
+	query       string
+	returnedIDs map[string]struct{}
+	at          time.Time
 }
 
 // tokenStats tracks estimated token savings for the current session. When a
@@ -238,6 +251,47 @@ func (ss *sessionState) recordSearch(query string) {
 	ss.recentSearches = prependUnique(ss.recentSearches, query, 10)
 }
 
+// comboWindow is how long after a search_symbols the session will still
+// attribute a consume call (get_symbol_source / get_editing_context) back
+// to that search's query for combo tracking. FFF uses a similar concept
+// with a T-second window; 5 minutes is long enough for agents that
+// interleave many tool calls but short enough that an unrelated later
+// consume doesn't get mis-attributed.
+const comboWindow = 5 * time.Minute
+
+// recordLastSearch captures the query + the IDs it returned so a later
+// consume call can be credited to this query. Truncating to the top N
+// results keeps the map small — only symbols the agent can plausibly
+// have seen are eligible.
+func (ss *sessionState) recordLastSearch(query string, ids []string) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	ss.lastSearch = lastSearchState{query: query, returnedIDs: set, at: time.Now()}
+}
+
+// attributedQuery returns the query string that should receive credit for
+// consuming symbolID, or "" if no recent search eligibly returned it.
+// Cleared from the caller's perspective but not from state — a single
+// search can legitimately credit several consume calls.
+func (ss *sessionState) attributedQuery(symbolID string) string {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if ss.lastSearch.query == "" || symbolID == "" {
+		return ""
+	}
+	if time.Since(ss.lastSearch.at) > comboWindow {
+		return ""
+	}
+	if _, ok := ss.lastSearch.returnedIDs[symbolID]; !ok {
+		return ""
+	}
+	return ss.lastSearch.query
+}
+
 func (ss *sessionState) snapshot() map[string]any {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -321,6 +375,20 @@ func NewServer(engine *query.Engine, g *graph.Graph, idx *indexer.Indexer, watch
 // Call after NewServer with the cache directory and primary repo path.
 func (s *Server) InitFeedback(cacheDir, repoPath string) {
 	s.feedback = newFeedbackManager(cacheDir, repoPath)
+}
+
+// InitCombo initializes the query→symbol combo tracker. Persists per-repo,
+// same cache directory as feedback; zero-effect no-op when either argument
+// is empty. mode selects the max-age reap schedule (AI: 7 days, human: 30).
+func (s *Server) InitCombo(cacheDir, repoPath string, mode AgentMode) {
+	s.combo = newComboManager(cacheDir, repoPath, mode)
+}
+
+// InitFrecency initializes the implicit symbol frecency tracker. mode
+// selects the decay regime — ModeAI (3-day half-life) for MCP server use;
+// ModeHuman (10-day) for interactive sessions.
+func (s *Server) InitFrecency(cacheDir, repoPath string, mode AgentMode) {
+	s.frecency = newFrecencyTracker(cacheDir, repoPath, mode)
 }
 
 // InitSavings wires the persistent token-savings store into tokenStats so

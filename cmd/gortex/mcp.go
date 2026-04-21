@@ -258,6 +258,13 @@ func runMCP(cmd *cobra.Command, args []string) error {
 
 	// Initialize feedback persistence for cross-session context learning.
 	srv.InitFeedback(mcpCacheDir, mcpIndex)
+	// Combo tracker persists (query → chosen symbol) associations per repo
+	// so the next time the agent asks the same thing, the previously-picked
+	// symbol floats to the top of search results.
+	srv.InitCombo(mcpCacheDir, mcpIndex, gortexmcp.ModeAI)
+	// Frecency: per-symbol access timestamps with AI-tuned (3-day half-life)
+	// decay. Hot symbols in the current session float up in search results.
+	srv.InitFrecency(mcpCacheDir, mcpIndex, gortexmcp.ModeAI)
 
 	// Initialize cumulative token-savings persistence. Path defaults to
 	// ~/.cache/gortex/savings.json; the store operates in-memory when the

@@ -10,9 +10,10 @@ import (
 // Optimal for repos up to ~50k symbols. Zero external dependencies.
 type BM25Backend struct {
 	mu       sync.RWMutex
-	docs     map[string]*doc       // docID -> document
-	inverted map[string][]posting  // term -> postings list
-	totalLen int                   // sum of all doc lengths (for avgLen)
+	docs     map[string]*doc      // docID -> document
+	inverted map[string][]posting // term -> postings list
+	totalLen int                  // sum of all doc lengths (for avgLen)
+	bigrams  *bigramIndex         // side index for typo-tolerant fallback recall
 }
 
 type doc struct {
@@ -57,12 +58,20 @@ func (b *BM25Backend) SizeBytes() uint64 {
 	return bytes
 }
 
-// NewBM25 creates a new BM25 search backend.
+// NewBM25 creates a new BM25 search backend. The bigram side index for
+// typo-tolerant rescue is built only when GORTEX_BIGRAM_TYPOS is set;
+// leaving it nil is cheap — every bigram method is nil-safe and returns
+// the zero-cost branch, so the engine's typo-rescue tier becomes a no-op
+// automatically.
 func NewBM25() *BM25Backend {
-	return &BM25Backend{
+	b := &BM25Backend{
 		docs:     make(map[string]*doc),
 		inverted: make(map[string][]posting),
 	}
+	if bigramIndexEnabled() {
+		b.bigrams = newBigramIndex()
+	}
+	return b
 }
 
 func (b *BM25Backend) Add(id string, fields ...string) {
@@ -94,6 +103,9 @@ func (b *BM25Backend) Add(id string, fields ...string) {
 	for term, freq := range termFreq {
 		b.inverted[term] = append(b.inverted[term], posting{id, freq})
 	}
+
+	// Keep the bigram side index in lockstep — same token set, same doc ID.
+	b.bigrams.Add(id, allTokens)
 }
 
 func (b *BM25Backend) Remove(id string) {
@@ -125,6 +137,7 @@ func (b *BM25Backend) removeLocked(id string) {
 	}
 
 	delete(b.docs, id)
+	b.bigrams.Remove(id)
 }
 
 func (b *BM25Backend) Search(query string, limit int) []SearchResult {
@@ -165,6 +178,11 @@ func (b *BM25Backend) Search(query string, limit int) []SearchResult {
 	}
 
 	if len(scores) == 0 {
+		// The engine layer has its own fallback chain — exact-name match
+		// then substring contains — that handles queries like "NewServer"
+		// which the backend's camelCase-split tokenization misses. We stay
+		// strict here so those higher-precision fallbacks can run; typo
+		// rescue via bigram overlap belongs one level up, after those.
 		return nil
 	}
 
@@ -190,6 +208,16 @@ func (b *BM25Backend) Search(query string, limit int) []SearchResult {
 		out[i] = SearchResult{ID: r.id, Score: r.score}
 	}
 	return out
+}
+
+// BigramCandidates exposes the bigram-overlap list for explicit typo-mode
+// callers. minOverlap gates how similar a doc must be — the caller picks
+// the strictness.
+func (b *BM25Backend) BigramCandidates(query string, minOverlap int) []string {
+	if b.bigrams == nil {
+		return nil
+	}
+	return b.bigrams.Candidates(query, minOverlap)
 }
 
 func (b *BM25Backend) Count() int {

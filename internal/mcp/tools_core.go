@@ -559,7 +559,8 @@ func (s *Server) handleSearchSymbols(ctx context.Context, req mcp.CallToolReques
 	}
 	limit := req.GetInt("limit", 20)
 
-	s.sessionFor(ctx).recordSearch(q)
+	sess := s.sessionFor(ctx)
+	sess.recordSearch(q)
 	nodes := s.engine.SearchSymbols(q, limit+10)
 
 	// Apply repo/project/ref filter.
@@ -568,6 +569,15 @@ func (s *Server) handleSearchSymbols(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(filterErr.Error()), nil
 	}
 	nodes = filterNodes(nodes, allowed)
+
+	// Rerank: fold combo + frecency signals over the backend's BM25 order.
+	// Both signals are per-repo and zero-valued until the agent has spent
+	// some time in the codebase, so cold queries return BM25 order verbatim.
+	nodes = applyRerankBoosts(nodes, s.combo, s.frecency, q)
+
+	// Remember the returned IDs for attribution on later consume calls.
+	// Cap at top limit so unseen "overflow" results don't get credited.
+	recordLastSearchFromNodes(sess, q, nodes, limit)
 
 	if isCompact(req) {
 		if len(nodes) > limit {

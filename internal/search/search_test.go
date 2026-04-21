@@ -115,10 +115,22 @@ func TestBM25_RankingQuality(t *testing.T) {
 	b.Add("api/handler.go::tokenHandler", "tokenHandler", "api/handler.go", "func tokenHandler(w http.ResponseWriter)")
 
 	results := b.Search("auth token", 10)
-	require.Len(t, results, 3) // loadConfig shouldn't match
-
-	// validateToken should rank highest (matches both "validate"→"token" and path "auth")
+	// OR ranking: every doc matching any query token is scored.
+	// validateToken has both terms so it ranks first; createSession
+	// and tokenHandler each match one; loadConfig matches neither
+	// and is dropped.
+	require.Len(t, results, 3)
 	assert.Equal(t, "auth/token.go::validateToken", results[0].ID)
+}
+
+func TestBM25_DuplicateTokensCollapse(t *testing.T) {
+	b := NewBM25()
+	defer b.Close()
+	b.Add("a", "token token", "a.go")
+	b.Add("b", "token parser", "b.go")
+
+	results := b.Search("token token token", 10)
+	require.Len(t, results, 2)
 }
 
 func BenchmarkBM25_Search(b *testing.B) {
