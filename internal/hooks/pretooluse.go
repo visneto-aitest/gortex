@@ -99,6 +99,8 @@ func enrich(input HookInput, port int) enrichResult {
 		return enrichGlob(input.ToolInput)
 	case "Task":
 		return enrichTask(input.ToolInput, port)
+	case "Bash":
+		return enrichBash(input.ToolInput, port)
 	default:
 		return enrichResult{}
 	}
@@ -123,19 +125,7 @@ func enrichRead(toolInput map[string]any, port int) enrichResult {
 		return enrichResult{}
 	}
 
-	// Check if Gortex has this file indexed (bridge must be running).
-	fileIndexed := false
-	symbolCount := 0
-	resp, err := queryGortex(port, "/api/graph/file?path="+url.QueryEscape(filePath))
-	if err == nil && resp != "" {
-		var result struct {
-			Nodes []any `json:"nodes"`
-		}
-		if json.Unmarshal([]byte(resp), &result) == nil && len(result.Nodes) > 1 {
-			fileIndexed = true
-			symbolCount = len(result.Nodes) - 1 // subtract the file node
-		}
-	}
+	fileIndexed, symbolCount := queryFileIndexed(port, filePath)
 
 	// If the file is indexed, BLOCK the read and provide graph alternatives.
 	if fileIndexed {
@@ -234,16 +224,23 @@ var grepProbe grepProbeFn = probeViaDaemon
 // denied with top matches and a bypass hint; on miss/timeout/non-symbol the
 // existing soft guidance is returned so Grep proceeds.
 func enrichGrep(toolInput map[string]any, _ int) enrichResult {
-	pattern, ok := toolInput["pattern"].(string)
-	if !ok || pattern == "" {
+	pattern, _ := toolInput["pattern"].(string)
+	return probeSymbolPattern("Grep", pattern, defaultGrepGuidance())
+}
+
+// probeSymbolPattern is the shared body of enrichGrep and the grep-/find-like
+// branches of enrichBash. Given a pattern, it gates on symbol-shape, probes
+// the daemon, and returns deny-with-hits or soft guidance. Telemetry is
+// attributed to the `tool` label so Grep- vs Bash-sourced probes stay
+// distinguishable in `hook-decisions.jsonl`.
+func probeSymbolPattern(tool, pattern, guidance string) enrichResult {
+	if pattern == "" {
 		return enrichResult{}
 	}
 
-	guidance := defaultGrepGuidance()
-
 	if classifyGrepPattern(pattern) != GrepPatternSymbol {
 		if len(pattern) > 2 {
-			logHookDecision("Grep", pattern, DecisionSkippedNonSymbol, 0, 0)
+			logHookDecision(tool, pattern, DecisionSkippedNonSymbol, 0, 0)
 			return enrichResult{context: guidance}
 		}
 		return enrichResult{}
@@ -254,23 +251,23 @@ func enrichGrep(toolInput map[string]any, _ int) enrichResult {
 	dur := time.Since(start)
 	switch {
 	case errors.Is(err, errProbeTimeout):
-		logHookDecision("Grep", pattern, DecisionTimedOut, 0, dur)
+		logHookDecision(tool, pattern, DecisionTimedOut, 0, dur)
 		return enrichResult{context: guidance}
 	case errors.Is(err, errDaemonUnreachable):
 		// No daemon = no signal. Don't pollute telemetry with infra noise.
 		return enrichResult{context: guidance}
 	case err != nil:
 		// Other transport/decode failure — treat as miss so we have a record.
-		logHookDecision("Grep", pattern, DecisionProbedMiss, 0, dur)
+		logHookDecision(tool, pattern, DecisionProbedMiss, 0, dur)
 		return enrichResult{context: guidance}
 	}
 
 	if len(hits) == 0 {
-		logHookDecision("Grep", pattern, DecisionProbedMiss, 0, dur)
+		logHookDecision(tool, pattern, DecisionProbedMiss, 0, dur)
 		return enrichResult{context: guidance}
 	}
 
-	logHookDecision("Grep", pattern, DecisionProbedHit, len(hits), dur)
+	logHookDecision(tool, pattern, DecisionProbedHit, len(hits), dur)
 	return enrichResult{
 		deny:   true,
 		reason: formatGrepDeny(pattern, hits),
@@ -308,6 +305,77 @@ func formatGrepDeny(pattern string, hits []grepSymbolHit) string {
 	b.WriteString(gcxTip)
 	b.WriteString("To force text search, add a regex metachar (e.g. \\b) or quote the pattern.")
 	return b.String()
+}
+
+// queryFileIndexed asks the local bridge whether the file at filePath is
+// indexed, returning the symbol count when it is. Shared by enrichRead and
+// enrichBash. A zero return (false, 0) is the "no signal" case — daemon
+// unreachable, malformed response, or file genuinely not indexed; callers
+// treat all three the same (fall through to soft guidance).
+func queryFileIndexed(port int, filePath string) (bool, int) {
+	resp, err := queryGortex(port, "/api/graph/file?path="+url.QueryEscape(filePath))
+	if err != nil || resp == "" {
+		return false, 0
+	}
+	var result struct {
+		Nodes []any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+		return false, 0
+	}
+	if len(result.Nodes) <= 1 {
+		return false, 0
+	}
+	return true, len(result.Nodes) - 1 // subtract the file node itself
+}
+
+// enrichBash classifies the Bash command and routes codebase-search shapes
+// through the same graph probes the Grep and Read enrichments use. Anything
+// not recognised as a codebase search passes through silently — false-deny
+// is more disruptive than a miss, so the classifier only flags primary
+// grep/rg/find-name/cat-source invocations.
+func enrichBash(toolInput map[string]any, port int) enrichResult {
+	cmd, _ := toolInput["command"].(string)
+	if cmd == "" {
+		return enrichResult{}
+	}
+
+	c := classifyBashCommand(cmd)
+	switch c.Action {
+	case BashActionGrepLike:
+		return probeSymbolPattern("Bash", c.Pattern, defaultGrepGuidance())
+
+	case BashActionFindName:
+		// find -name values often include `*` globs; the classifier has
+		// already stripped wildcards, but the residue may still be
+		// non-symbol-shaped (e.g. ".go" from `-name "*.go"`) — let
+		// probeSymbolPattern decide.
+		return probeSymbolPattern("Bash", c.Pattern, defaultGrepGuidance())
+
+	case BashActionReadSource:
+		indexed, symbolCount := queryFileIndexed(port, c.Path)
+		if indexed {
+			var reason strings.Builder
+			fmt.Fprintf(&reason,
+				"[Gortex] BLOCKED: Bash `%s %s` reads indexed source (%d symbols). Use graph tools instead:\n",
+				c.Primary, c.Path, symbolCount)
+			reason.WriteString("  - `get_symbol_source` — one symbol (80% fewer tokens)\n")
+			reason.WriteString("  - `get_file_summary` — all symbols and imports\n")
+			reason.WriteString("  - `get_editing_context` — full file context before editing\n")
+			reason.WriteString(gcxTip)
+			return enrichResult{deny: true, reason: reason.String()}
+		}
+		// Not indexed — soft guidance so Bash proceeds.
+		var g strings.Builder
+		g.WriteString("[Gortex] PREFER graph tools over Bash cat/head/tail for source files:\n")
+		g.WriteString("  - To read one symbol: use `get_symbol_source` (80% fewer tokens)\n")
+		g.WriteString("  - To get a file overview: use `get_file_summary`\n")
+		g.WriteString("  - To understand a file before editing: use `get_editing_context`\n")
+		g.WriteString(gcxTip)
+		return enrichResult{context: g.String()}
+	}
+
+	return enrichResult{}
 }
 
 // enrichGlob suggests graph alternatives for file discovery.

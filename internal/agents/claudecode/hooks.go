@@ -16,9 +16,9 @@ import (
 
 // CurrentPreToolUseMatcher is the canonical matcher pattern we bake
 // into Claude Code's PreToolUse hook. Older versions used
-// "Read|Grep" or "Read|Grep|Glob"; upgradeGortexMatcher rewrites
-// those in place.
-const CurrentPreToolUseMatcher = "Read|Grep|Glob|Task"
+// "Read|Grep", "Read|Grep|Glob", or "Read|Grep|Glob|Task";
+// upgradeGortexMatcher rewrites those in place.
+const CurrentPreToolUseMatcher = "Read|Grep|Glob|Task|Bash"
 
 // ResolveHookCommand returns the shell command to bake into Claude
 // Code's hook config. It prefers the `gortex` binary on PATH so
@@ -115,13 +115,18 @@ func appendHookEntry(hooks map[string]any, event string, entry map[string]any) {
 }
 
 // upgradeGortexMatcher rewrites older PreToolUse matchers to the
-// current "Read|Grep|Glob|Task". Returns true when a change was
-// made. Handles the two historical matchers we've shipped
-// ("Read|Grep" and "Read|Grep|Glob"); anything else is left alone.
+// current CurrentPreToolUseMatcher. Returns true when a change was
+// made. Handles every historical matcher we've shipped; anything
+// not in that set is left alone.
 func upgradeGortexMatcher(hooks map[string]any) bool {
 	pre, ok := hooks["PreToolUse"].([]any)
 	if !ok {
 		return false
+	}
+	legacyMatchers := map[string]bool{
+		"Read|Grep":           true,
+		"Read|Grep|Glob":      true,
+		"Read|Grep|Glob|Task": true,
 	}
 	upgraded := false
 	for _, h := range pre {
@@ -130,7 +135,7 @@ func upgradeGortexMatcher(hooks map[string]any) bool {
 			continue
 		}
 		matcher, _ := hm["matcher"].(string)
-		if matcher != "Read|Grep" && matcher != "Read|Grep|Glob" {
+		if !legacyMatchers[matcher] {
 			continue
 		}
 		if !entryInvokesGortexHook(hm) {
